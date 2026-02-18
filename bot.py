@@ -1,387 +1,184 @@
-# ================================
-# FULL DISCORD MANAGEMENT BOT
-# 100+ READY STRUCTURE + WEB GUI
-# discord.py 2.4+
-# Flask Dashboard Included
-# Railway / VPS READY
-# ================================
-
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
-import sqlite3
-import asyncio
-import os
+import aiosqlite
+import io
+from PIL import Image, ImageDraw
 import datetime
-import threading
-from flask import Flask, render_template_string, request, redirect
 
-# ================================
-# CONFIG
-# ================================
+# ================= CONFIG =================
+TOKEN = "YOUR_TOKEN_HERE"  # вставь свой токен
+GUILD_ID = 1234567890      # твой сервер
+WELCOME_CHANNEL_ID = 1234567890
+LOG_CHANNEL_ID = 1234567890
 
-TOKEN = os.getenv("TOKEN") or "YOUR_TOKEN_HERE"
-PREFIX = "!"
-DB_NAME = "bot.db"
-OWNER_ID = 1234567890
-
-# ================================
-# INTENTS
-# ================================
+DB = "hubsters_ui.db"
 
 intents = discord.Intents.all()
+bot = commands.Bot(command_prefix="!", intents=intents)
+tree = bot.tree
 
-bot = commands.Bot(
-    command_prefix=PREFIX,
-    intents=intents,
-    help_command=None
-)
+# ================= DATABASE =================
+async def init_db():
+    async with aiosqlite.connect(DB) as db_conn:
+        await db_conn.execute("""CREATE TABLE IF NOT EXISTS safe(balance INTEGER)""")
+        await db_conn.execute("""CREATE TABLE IF NOT EXISTS warehouse(item TEXT PRIMARY KEY, amount INTEGER)""")
+        await db_conn.execute("""CREATE TABLE IF NOT EXISTS guns(gun TEXT PRIMARY KEY, amount INTEGER)""")
+        await db_conn.execute("""CREATE TABLE IF NOT EXISTS warns(user_id INTEGER, reason TEXT)""")
+        cursor = await db_conn.execute("SELECT COUNT(*) FROM safe")
+        if (await cursor.fetchone())[0] == 0:
+            await db_conn.execute("INSERT INTO safe VALUES(0)")
+        await db_conn.commit()
 
-# ================================
-# DATABASE
-# ================================
+# ================= LOG =================
+async def log(text):
+    ch = bot.get_channel(LOG_CHANNEL_ID)
+    if ch:
+        await ch.send(f"📋 {text}")
+    async with aiosqlite.connect(DB) as db_conn:
+        await db_conn.execute("INSERT INTO logs VALUES (?,?)", (text, str(datetime.datetime.now())))
+        await db_conn.commit()
 
-def db():
-    return sqlite3.connect(DB_NAME)
-
-def init_db():
-    with db() as conn:
-        c = conn.cursor()
-
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS warnings(
-            user_id INTEGER,
-            guild_id INTEGER,
-            reason TEXT,
-            time TEXT
-        )
-        """)
-
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS settings(
-            guild_id INTEGER,
-            key TEXT,
-            value TEXT
-        )
-        """)
-
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS economy(
-            user_id INTEGER,
-            balance INTEGER
-        )
-        """)
-
-init_db()
-
-# ================================
-# WEB DASHBOARD (GUI)
-# ================================
-
-app = Flask(__name__)
-
-HTML = """
-<html>
-<head>
-<title>Bot Control Panel</title>
-<style>
-body {background:#111;color:white;font-family:Arial}
-button {padding:10px;margin:5px;background:#5865F2;color:white;border:none}
-</style>
-</head>
-<body>
-
-<h1>Bot Dashboard</h1>
-
-<form method="post">
-<button name="action" value="shutdown">Shutdown Bot</button>
-<button name="action" value="restart">Restart Bot</button>
-</form>
-
-</body>
-</html>
-"""
-
-@app.route("/", methods=["GET","POST"])
-def panel():
-    if request.method == "POST":
-        if request.form["action"] == "shutdown":
-            asyncio.run_coroutine_threadsafe(bot.close(), bot.loop)
-    return render_template_string(HTML)
-
-def run_web():
-    app.run(host="0.0.0.0", port=8080)
-
-# ================================
-# EVENTS
-# ================================
+# ================= WELCOME IMAGE =================
+async def welcome_image(member):
+    avatar_bytes = await member.display_avatar.read()
+    avatar = Image.open(io.BytesIO(avatar_bytes)).resize((128,128))
+    bg = Image.new("RGB",(600,200),(20,20,20))
+    bg.paste(avatar,(30,40))
+    draw = ImageDraw.Draw(bg)
+    draw.text((200,80), member.name, fill=(0,255,150))
+    draw.text((200,120), "Добро пожаловать в HUBsters Family", fill=(255,255,255))
+    buf=io.BytesIO()
+    bg.save(buf,"PNG")
+    buf.seek(0)
+    return buf
 
 @bot.event
-async def on_ready():
-    print(f"Logged in as {bot.user}")
-    try:
-        synced = await bot.tree.sync()
-        print(f"Slash synced: {len(synced)}")
-    except:
-        pass
+async def on_member_join(member):
+    ch = bot.get_channel(WELCOME_CHANNEL_ID)
+    if not ch:
+        return
+    img = await welcome_image(member)
+    file = discord.File(img, "welcome.png")
+    embed = discord.Embed(title="Новый участник", description=member.mention, color=0x00ff88)
+    embed.set_image(url="attachment://welcome.png")
+    await ch.send(embed=embed, file=file)
+    await log(f"{member} joined")
 
-# ================================
-# HELP
-# ================================
+# ================= UI PANEL =================
+class MainPanel(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
 
-@bot.command()
-async def help(ctx):
-    embed = discord.Embed(title="Bot Commands", color=0x5865F2)
+    # ---------- SAFE ----------
+    @discord.ui.button(label="Сейф", style=discord.ButtonStyle.green)
+    async def safe_btn(self, interaction, button):
+        async with aiosqlite.connect(DB) as db_conn:
+            cursor = await db_conn.execute("SELECT balance FROM safe")
+            bal = (await cursor.fetchone())[0]
+        await interaction.response.send_message(f"💰 Сейф: {bal}$", ephemeral=True)
 
-    embed.add_field(name="Moderation",
-    value="""
-!ban
-!kick
-!mute
-!unmute
-!warn
-!clear
-!lock
-!unlock
-""", inline=False)
+    @discord.ui.button(label="Добавить в Сейф", style=discord.ButtonStyle.green)
+    async def safe_add_btn(self, interaction, button):
+        await interaction.response.send_modal(SafeModal(action="add"))
 
-    embed.add_field(name="Roles",
-    value="""
-!addrole
-!removerole
-!createrole
-!deleterole
-""", inline=False)
+    @discord.ui.button(label="Убрать из Сейфа", style=discord.ButtonStyle.red)
+    async def safe_remove_btn(self, interaction, button):
+        await interaction.response.send_modal(SafeModal(action="remove"))
 
-    embed.add_field(name="Channels",
-    value="""
-!createchannel
-!deletechannel
-!slowmode
-""", inline=False)
+    # ---------- WAREHOUSE ----------
+    @discord.ui.button(label="Склад", style=discord.ButtonStyle.blurple)
+    async def warehouse_btn(self, interaction, button):
+        async with aiosqlite.connect(DB) as db_conn:
+            cursor = await db_conn.execute("SELECT * FROM warehouse")
+            rows = await cursor.fetchall()
+        text = "\n".join(f"{i}: {a}" for i,a in rows) or "Пусто"
+        await interaction.response.send_message(f"📦 Склад:\n{text}", ephemeral=True)
 
-    embed.add_field(name="Economy",
-    value="""
-!balance
-!addmoney
-!removemoney
-""", inline=False)
+    @discord.ui.button(label="Добавить в Склад", style=discord.ButtonStyle.blurple)
+    async def warehouse_add_btn(self, interaction, button):
+        await interaction.response.send_modal(WarehouseModal(action="add"))
 
-    await ctx.send(embed=embed)
+    # ---------- GUNS ----------
+    @discord.ui.button(label="Оружие", style=discord.ButtonStyle.gray)
+    async def guns_btn(self, interaction, button):
+        async with aiosqlite.connect(DB) as db_conn:
+            cursor = await db_conn.execute("SELECT * FROM guns")
+            rows = await cursor.fetchall()
+        text = "\n".join(f"{g}: {a}" for g,a in rows) or "Нет оружия"
+        await interaction.response.send_message(f"🔫 Оружие:\n{text}", ephemeral=True)
 
-# ================================
-# MODERATION
-# ================================
+    @discord.ui.button(label="Добавить оружие", style=discord.ButtonStyle.gray)
+    async def guns_add_btn(self, interaction, button):
+        await interaction.response.send_modal(GunsModal(action="add"))
 
-@bot.command()
-@commands.has_permissions(ban_members=True)
-async def ban(ctx, member: discord.Member, *, reason="No reason"):
-    await member.ban(reason=reason)
-    await ctx.send(f"Banned {member}")
+# ================= MODALS =================
+class SafeModal(discord.ui.Modal, title="Сейф"):
+    def __init__(self, action):
+        super().__init__()
+        self.action = action
+    amount = discord.ui.TextInput(label="Сумма", placeholder="Введите сумму", required=True)
+    async def on_submit(self, interaction: discord.Interaction):
+        amt = int(self.amount.value)
+        async with aiosqlite.connect(DB) as db_conn:
+            if self.action == "add":
+                await db_conn.execute("UPDATE safe SET balance=balance+?",(amt,))
+            else:
+                await db_conn.execute("UPDATE safe SET balance=balance-?",(amt,))
+            await db_conn.commit()
+        await interaction.response.send_message(f"{'Добавлено' if self.action=='add' else 'Убрано'} {amt}$", ephemeral=True)
 
-@bot.command()
-@commands.has_permissions(kick_members=True)
-async def kick(ctx, member: discord.Member, *, reason="No reason"):
-    await member.kick(reason=reason)
-    await ctx.send(f"Kicked {member}")
+class WarehouseModal(discord.ui.Modal, title="Склад"):
+    def __init__(self, action):
+        super().__init__()
+        self.action = action
+    item = discord.ui.TextInput(label="Название предмета")
+    amount = discord.ui.TextInput(label="Количество")
+    async def on_submit(self, interaction: discord.Interaction):
+        amt = int(self.amount.value)
+        async with aiosqlite.connect(DB) as db_conn:
+            await db_conn.execute("""
+            INSERT INTO warehouse VALUES(?,?)
+            ON CONFLICT(item) DO UPDATE SET amount=amount+?
+            """,(self.item.value, amt, amt))
+            await db_conn.commit()
+        await interaction.response.send_message(f"📦 Добавлено {self.item.value} x{amt}", ephemeral=True)
 
-@bot.command()
-@commands.has_permissions(manage_messages=True)
-async def clear(ctx, amount: int):
-    await ctx.channel.purge(limit=amount)
-    await ctx.send(f"Deleted {amount}", delete_after=3)
+class GunsModal(discord.ui.Modal, title="Оружие"):
+    def __init__(self, action):
+        super().__init__()
+        self.action = action
+    gun = discord.ui.TextInput(label="Название оружия")
+    amount = discord.ui.TextInput(label="Количество")
+    async def on_submit(self, interaction: discord.Interaction):
+        amt = int(self.amount.value)
+        async with aiosqlite.connect(DB) as db_conn:
+            await db_conn.execute("""
+            INSERT INTO guns VALUES(?,?)
+            ON CONFLICT(gun) DO UPDATE SET amount=amount+?
+            """,(self.gun.value, amt, amt))
+            await db_conn.commit()
+        await interaction.response.send_message(f"🔫 Добавлено {self.gun.value} x{amt}", ephemeral=True)
 
-# ================================
-# WARN SYSTEM
-# ================================
+# ================= PANEL COMMAND =================
+@tree.command(guild=discord.Object(id=GUILD_ID))
+async def panel(interaction: discord.Interaction):
+    embed = discord.Embed(title="HUBsters CONTROL PANEL", description="Управление семьёй через кнопки", color=0x00ff88)
+    await interaction.response.send_message(embed=embed, view=MainPanel())
 
-@bot.command()
-async def warn(ctx, member: discord.Member, *, reason="No reason"):
-    with db() as conn:
-        conn.execute(
-            "INSERT INTO warnings VALUES(?,?,?,?)",
-            (member.id, ctx.guild.id, reason, str(datetime.datetime.now()))
-        )
-    await ctx.send(f"Warned {member}")
-
-@bot.command()
-async def warnings(ctx, member: discord.Member):
-    with db() as conn:
-        rows = conn.execute(
-            "SELECT reason FROM warnings WHERE user_id=?",
-            (member.id,)
-        ).fetchall()
-
-    text = "\n".join([r[0] for r in rows]) or "None"
-    await ctx.send(text)
-
-# ================================
-# MUTE SYSTEM
-# ================================
-
-@bot.command()
-@commands.has_permissions(manage_roles=True)
-async def mute(ctx, member: discord.Member):
-
-    role = discord.utils.get(ctx.guild.roles, name="Muted")
-
-    if not role:
-        role = await ctx.guild.create_role(name="Muted")
-
-        for ch in ctx.guild.channels:
-            await ch.set_permissions(role, send_messages=False)
-
-    await member.add_roles(role)
-    await ctx.send("Muted")
-
-@bot.command()
-async def unmute(ctx, member: discord.Member):
-    role = discord.utils.get(ctx.guild.roles, name="Muted")
-    await member.remove_roles(role)
-    await ctx.send("Unmuted")
-
-# ================================
-# ROLES
-# ================================
-
-@bot.command()
-async def addrole(ctx, member: discord.Member, role: discord.Role):
-    await member.add_roles(role)
-
-@bot.command()
-async def removerole(ctx, member: discord.Member, role: discord.Role):
-    await member.remove_roles(role)
-
-@bot.command()
-async def createrole(ctx, name):
-    await ctx.guild.create_role(name=name)
-
-@bot.command()
-async def deleterole(ctx, role: discord.Role):
-    await role.delete()
-
-# ================================
-# CHANNELS
-# ================================
-
-@bot.command()
-async def createchannel(ctx, name):
-    await ctx.guild.create_text_channel(name)
-
-@bot.command()
-async def deletechannel(ctx, channel: discord.TextChannel):
-    await channel.delete()
-
-@bot.command()
-async def lock(ctx):
-    await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=False)
-
-@bot.command()
-async def unlock(ctx):
-    await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=True)
-
-# ================================
-# ECONOMY
-# ================================
-
-def get_balance(user):
-    with db() as conn:
-        row = conn.execute(
-            "SELECT balance FROM economy WHERE user_id=?",
-            (user,)
-        ).fetchone()
-
-        if row:
-            return row[0]
-
-        conn.execute(
-            "INSERT INTO economy VALUES(?,?)",
-            (user, 0)
-        )
-
-        return 0
-
-def add_balance(user, amount):
-    bal = get_balance(user)
-    with db() as conn:
-        conn.execute(
-            "UPDATE economy SET balance=? WHERE user_id=?",
-            (bal + amount, user)
-        )
-
-@bot.command()
-async def balance(ctx, member: discord.Member=None):
-    member = member or ctx.author
-    await ctx.send(get_balance(member.id))
-
-@bot.command()
-async def addmoney(ctx, member: discord.Member, amount:int):
-    add_balance(member.id, amount)
-
-@bot.command()
-async def removemoney(ctx, member: discord.Member, amount:int):
-    add_balance(member.id, -amount)
-
-# ================================
-# MASS CONTROL
-# ================================
-
-@bot.command()
-async def massrole(ctx, role: discord.Role):
-    for member in ctx.guild.members:
-        await member.add_roles(role)
-
-@bot.command()
-async def masskick(ctx):
-    for member in ctx.guild.members:
-        if member != ctx.author:
-            await member.kick()
-
-# ================================
-# AUTO TASKS
-# ================================
-
+# ================= AUTO SAVE =================
 @tasks.loop(minutes=10)
 async def auto_save():
-    print("Autosave")
+    await log("Автосохранение данных выполнено")
 
-auto_save.start()
+# ================= ON READY =================
+@bot.event
+async def on_ready():
+    await init_db()
+    print(f"BOT READY: {bot.user}")
+    if not auto_save.is_running():
+        auto_save.start()
+    await tree.sync(guild=discord.Object(id=GUILD_ID))
 
-# ================================
-# ADMIN
-# ================================
-
-@bot.command()
-async def shutdown(ctx):
-    if ctx.author.id == OWNER_ID:
-        await bot.close()
-
-@bot.command()
-async def restart(ctx):
-    if ctx.author.id == OWNER_ID:
-        os.execv(__file__, ["python"] + [__file__])
-
-# ================================
-# 100+ COMMAND STRUCTURE READY
-# ADD MORE MODULES HERE
-# ================================
-
-# placeholders
-for i in range(1,101):
-
-    async def cmd(ctx, i=i):
-        await ctx.send(f"Function {i} working")
-
-    bot.command(name=f"func{i}")(cmd)
-
-# ================================
-# START WEB PANEL
-# ================================
-
-threading.Thread(target=run_web).start()
-
-# ================================
-# RUN BOT
-# ================================
-
+# ================= START BOT =================
 bot.run(TOKEN)
