@@ -11,7 +11,8 @@ import io
 with open("config.json") as f:
     config = json.load(f)
 
-TOKEN = config["TOKEN"]
+import os
+TOKEN = os.getenv["TOKEN"]
 GUILD_ID = config["guild_id"]
 WELCOME_CHANNEL = config["welcome_channel_id"]
 LOG_CHANNEL = config["log_channel_id"]
@@ -133,4 +134,25 @@ class HubPanel(discord.ui.View):
 
     @discord.ui.button(label="Сейф", style=discord.ButtonStyle.green)
     async def safe(self, interaction:discord.Interaction, button:discord.ui.Button):
-        await interaction.response.send_message("Safe button clicked!", ephemeral=True)
+        await interaction.response.send_message("Используй /safe_balance", ephemeral=True)
+
+    @discord.ui.button(label="Склад", style=discord.ButtonStyle.blurple)
+    async def warehouse(self, interaction, button):
+        await interaction.response.send_message("Используй /warehouse_add", ephemeral=True)
+
+    @discord.ui.button(label="Оружие", style=discord.ButtonStyle.red)
+    async def guns(self, interaction, button):
+        await interaction.response.send_message("Используй /gun_add", ephemeral=True)
+
+@bot.tree.command(name="panel", guild=discord.Object(id=GUILD_ID))
+async def panel(interaction:discord.Interaction):
+
+    embed = discord.Embed(
+        title="HUBsters Family Control Panel",
+        description="Панель управления семьёй",
+        color=0x00ff88
+    )
+
+    await interaction.response.send_message(embed=embed, view=HubPanel())
+
+bot.run(TOKEN)
