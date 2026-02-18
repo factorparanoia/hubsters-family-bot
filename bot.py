@@ -1,4 +1,132 @@
-connect(DB_NAME) as db:
+import discord
+from discord.ext import commands, tasks
+from discord import app_commands
+import aiosqlite
+import os
+import io
+import aiohttp
+from PIL import Image, ImageDraw
+import random
+import asyncio
+from datetime import datetime
+
+# ================= ENV =================
+
+TOKEN = os.getenv("TOKEN")
+GUILD_ID = int(os.getenv("GUILD_ID"))
+WELCOME_CHANNEL_ID = int(os.getenv("WELCOME_CHANNEL_ID"))
+LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
+CONTROL_CHANNEL_ID = int(os.getenv("CONTROL_CHANNEL_ID"))
+OWNER_ID = int(os.getenv("OWNER_ID"))
+
+DB_NAME = "hubsters.db"
+
+# ================= INTENTS =================
+
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# ================= DATABASE =================
+
+async def init_db():
+    async with aiosqlite.connect(DB_NAME) as db:
+
+        await db.execute("CREATE TABLE IF NOT EXISTS safe (balance INTEGER)")
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS warehouse (
+            name TEXT PRIMARY KEY,
+            amount INTEGER
+        )""")
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS guns (
+            name TEXT PRIMARY KEY,
+            amount INTEGER
+        )""")
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS logs (
+            text TEXT,
+            date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            responsible TEXT,
+            status TEXT
+        )""")
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS warnings (
+            user_id INTEGER,
+            count INTEGER
+        )""")
+
+        cursor = await db.execute("SELECT COUNT(*) FROM safe")
+        count = await cursor.fetchone()
+        if count[0] == 0:
+            await db.execute("INSERT INTO safe VALUES (0)")
+
+        await db.commit()
+
+async def log_action(text):
+    channel = bot.get_channel(LOG_CHANNEL_ID)
+    if channel:
+        await channel.send(f"📋 {text}")
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("INSERT INTO logs (text) VALUES (?)", (text,))
+        await db.commit()
+
+# ================= READY =================
+
+@bot.event
+async def on_ready():
+    await init_db()
+    await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+    weekly_report.start()
+    print(f"✅ HUBsters Family PRO ONLINE: {bot.user}")
+
+# ================= WELCOME =================
+
+async def create_welcome(member):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(member.display_avatar.url) as resp:
+            avatar_bytes = await resp.read()
+
+    avatar = Image.open(io.BytesIO(avatar_bytes)).resize((128,128))
+    img = Image.new("RGB", (700,250), (25,25,25))
+    img.paste(avatar, (40,60))
+    draw = ImageDraw.Draw(img)
+    draw.text((220,90), "Добро пожаловать в HUBsters Family", fill=(255,255,255))
+    draw.text((220,130), member.name, fill=(0,255,150))
+    buffer = io.BytesIO()
+    img.save(buffer, "PNG")
+    buffer.seek(0)
+    return buffer
+
+@bot.event
+async def on_member_join(member):
+    channel = bot.get_channel(WELCOME_CHANNEL_ID)
+    image = await create_welcome(member)
+    file = discord.File(image, "welcome.png")
+    embed = discord.Embed(
+        title="👑 Новый участник семьи",
+        description=f"{member.mention} теперь с нами.",
+        color=0x00ff88
+    )
+    embed.set_image(url="attachment://welcome.png")
+    await channel.send(file=file, embed=embed)
+
+# ================= SAFE =================
+
+@bot.tree.command(guild=discord.Object(id=GUILD_ID))
+async def safe(interaction: discord.Interaction):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT balance FROM safe")
+        balance = (await cursor.fetchone())[0]
+    await interaction.response.send_message(f"💰 Баланс сейфа: {balance}$")
+
+@bot.tree.command(guild=discord.Object(id=GUILD_ID))
+async def safe_add(interaction: discord.Interaction, amount:int):
+    async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("UPDATE safe SET balance = balance + ?", (amount,))
         await db.commit()
     await log_action(f"{interaction.user} добавил {amount}$ в сейф")
