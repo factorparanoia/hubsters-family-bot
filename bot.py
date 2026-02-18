@@ -4,9 +4,9 @@ import aiosqlite
 import asyncio
 import random
 
-TOKEN = "YOUR_BOT_TOKEN_HERE"
-GUILD_ID = 1234567890
-LOG_CHANNEL_ID = 1234567890
+TOKEN = "MTQ3MzY1OTMzODM1ODAwMTgxNw.GAWnQu.VutiZEBoTBJldle4KONDrHbXfHefTkcDbPazoc"
+GUILD_ID = 1473397177576329219
+LOG_CHANNEL_ID = 1473397178797129982
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
