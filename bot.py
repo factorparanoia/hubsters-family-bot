@@ -12,7 +12,7 @@ with open("config.json") as f:
     config = json.load(f)
 
 import os
-TOKEN = os.getenv["TOKEN"]
+TOKEN = os.getenv("TOKEN")
 GUILD_ID = config["guild_id"]
 WELCOME_CHANNEL = config["welcome_channel_id"]
 LOG_CHANNEL = config["log_channel_id"]
