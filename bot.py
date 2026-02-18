@@ -7,8 +7,8 @@ from PIL import Image, ImageDraw
 import datetime
 
 # ================= CONFIG =================
-TOKEN = "YOUR_TOKEN_HERE"  # вставь свой токен
-GUILD_ID = 1234567890      # твой сервер
+TOKEN = "MTQ3MzY1OTMzODM1ODAwMTgxNw.GAWnQu.VutiZEBoTBJldle4KONDrHbXfHefTkcDbPazoc"  # вставь свой токен
+GUILD_ID = 1473397177576329219      # твой сервер
 WELCOME_CHANNEL_ID = 1234567890
 LOG_CHANNEL_ID = 1234567890
 
