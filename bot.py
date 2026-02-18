@@ -133,3 +133,4 @@ class HubPanel(discord.ui.View):
 
     @discord.ui.button(label="Сейф", style=discord.ButtonStyle.green)
     async def safe(self, interaction:discord.Interaction, button:discord.ui.Button):
+        await interaction.response.send_message("Safe button clicked!", ephemeral=True)
