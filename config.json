@@ -1,8 +1,8 @@
 {
-    "token": "",
-    "guild_id": 1473397177576329219
+    "token": "TOKEN",
+    "guild_id": 1473397177576329219,
     "welcome_channel_id": 1473397178583089346,
-    "log_channel_id": LOG_CHANNEL_ID,
-    "control_channel_id": CONTROL_CHANNEL_ID,
-    "family_role_id": FAMILY_ROLE_ID
+    "log_channel_id": 1473675996699033664,
+    "control_channel_id": 1473675996699033664,
+    "family_role_id": 1473675996699033664
 }
