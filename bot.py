@@ -5,12 +5,12 @@ import aiosqlite
 import os
 import io
 import aiohttp
-from PIL import Image, ImageDraw
-import random
+from PIL import Image, ImageDraw, ImageFont
+import datetime
 import asyncio
-from datetime import datetime
+import random
 
-# ================= ENV =================
+# ================= CONFIG =================
 
 TOKEN = os.getenv("TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID"))
@@ -19,245 +19,375 @@ LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
 CONTROL_CHANNEL_ID = int(os.getenv("CONTROL_CHANNEL_ID"))
 OWNER_ID = int(os.getenv("OWNER_ID"))
 
-DB_NAME = "hubsters.db"
+DB = "hubsters.db"
 
 # ================= INTENTS =================
 
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
+
+bot = commands.Bot(
+    command_prefix="!",
+    intents=intents
+)
+
+tree = bot.tree
 
 # ================= DATABASE =================
 
 async def init_db():
-    async with aiosqlite.connect(DB_NAME) as db:
 
-        await db.execute("CREATE TABLE IF NOT EXISTS safe (balance INTEGER)")
+    async with aiosqlite.connect(DB) as db:
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS safe (
+            balance INTEGER
+        )
+        """)
+
         await db.execute("""
         CREATE TABLE IF NOT EXISTS warehouse (
-            name TEXT PRIMARY KEY,
+            item TEXT PRIMARY KEY,
             amount INTEGER
-        )""")
+        )
+        """)
+
         await db.execute("""
         CREATE TABLE IF NOT EXISTS guns (
-            name TEXT PRIMARY KEY,
+            gun TEXT PRIMARY KEY,
             amount INTEGER
-        )""")
+        )
+        """)
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS warns (
+            user_id INTEGER,
+            reason TEXT
+        )
+        """)
+
         await db.execute("""
         CREATE TABLE IF NOT EXISTS logs (
             text TEXT,
-            date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )""")
-        await db.execute("""
-        CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT,
-            responsible TEXT,
-            status TEXT
-        )""")
-        await db.execute("""
-        CREATE TABLE IF NOT EXISTS warnings (
-            user_id INTEGER,
-            count INTEGER
-        )""")
+            date TEXT
+        )
+        """)
 
         cursor = await db.execute("SELECT COUNT(*) FROM safe")
         count = await cursor.fetchone()
+
         if count[0] == 0:
             await db.execute("INSERT INTO safe VALUES (0)")
 
         await db.commit()
 
-async def log_action(text):
+# ================= LOG =================
+
+async def log(text):
+
     channel = bot.get_channel(LOG_CHANNEL_ID)
+
     if channel:
         await channel.send(f"📋 {text}")
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("INSERT INTO logs (text) VALUES (?)", (text,))
+
+    async with aiosqlite.connect(DB) as db:
+
+        await db.execute(
+            "INSERT INTO logs VALUES (?,?)",
+            (text, str(datetime.datetime.now()))
+        )
+
         await db.commit()
 
 # ================= READY =================
 
 @bot.event
 async def on_ready():
+
     await init_db()
-    await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
-    weekly_report.start()
-    print(f"✅ HUBsters Family PRO ONLINE: {bot.user}")
 
-# ================= WELCOME =================
+    await tree.sync(
+        guild=discord.Object(id=GUILD_ID)
+    )
 
-async def create_welcome(member):
+    print(f"✅ HUBsters Family ULTRA PRO READY: {bot.user}")
+
+# ================= WELCOME IMAGE =================
+
+async def welcome_image(member):
+
     async with aiohttp.ClientSession() as session:
+
         async with session.get(member.display_avatar.url) as resp:
             avatar_bytes = await resp.read()
 
-    avatar = Image.open(io.BytesIO(avatar_bytes)).resize((128,128))
-    img = Image.new("RGB", (700,250), (25,25,25))
-    img.paste(avatar, (40,60))
-    draw = ImageDraw.Draw(img)
-    draw.text((220,90), "Добро пожаловать в HUBsters Family", fill=(255,255,255))
-    draw.text((220,130), member.name, fill=(0,255,150))
+    avatar = Image.open(io.BytesIO(avatar_bytes)).resize((150,150))
+
+    bg = Image.new("RGB", (600,250), (15,15,15))
+
+    bg.paste(avatar, (30,50))
+
+    draw = ImageDraw.Draw(bg)
+
+    draw.text(
+        (200,80),
+        f"{member.name}",
+        fill=(0,255,150)
+    )
+
+    draw.text(
+        (200,130),
+        "Добро пожаловать в HUBsters Family",
+        fill=(255,255,255)
+    )
+
     buffer = io.BytesIO()
-    img.save(buffer, "PNG")
+
+    bg.save(buffer, "PNG")
+
     buffer.seek(0)
+
     return buffer
 
 @bot.event
 async def on_member_join(member):
+
     channel = bot.get_channel(WELCOME_CHANNEL_ID)
-    image = await create_welcome(member)
-    file = discord.File(image, "welcome.png")
+
+    if not channel:
+        return
+
+    img = await welcome_image(member)
+
+    file = discord.File(img, "welcome.png")
+
     embed = discord.Embed(
-        title="👑 Новый участник семьи",
-        description=f"{member.mention} теперь с нами.",
+        title="Новый участник",
+        description=member.mention,
         color=0x00ff88
     )
+
     embed.set_image(url="attachment://welcome.png")
-    await channel.send(file=file, embed=embed)
+
+    await channel.send(embed=embed, file=file)
+
+    await log(f"{member} joined server")
 
 # ================= SAFE =================
 
-@bot.tree.command(guild=discord.Object(id=GUILD_ID))
+@tree.command(guild=discord.Object(id=GUILD_ID))
 async def safe(interaction: discord.Interaction):
-    async with aiosqlite.connect(DB_NAME) as db:
+
+    async with aiosqlite.connect(DB) as db:
+
         cursor = await db.execute("SELECT balance FROM safe")
-        balance = (await cursor.fetchone())[0]
-    await interaction.response.send_message(f"💰 Баланс сейфа: {balance}$")
 
-@bot.tree.command(guild=discord.Object(id=GUILD_ID))
+        bal = (await cursor.fetchone())[0]
+
+    await interaction.response.send_message(f"💰 Сейф: {bal}$")
+
+@tree.command(guild=discord.Object(id=GUILD_ID))
 async def safe_add(interaction: discord.Interaction, amount:int):
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("UPDATE safe SET balance = balance + ?", (amount,))
-        await db.commit()
-    await log_action(f"{interaction.user} добавил {amount}$ в сейф")
-    await interaction.response.send_message("Добавлено")
+    async with aiosqlite.connect(DB) as db:
 
-@bot.tree.command(guild=discord.Object(id=GUILD_ID))
-async def safe_remove(interaction: discord.Interaction, amount:int):
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("UPDATE safe SET balance = balance - ?", (amount,))
+        await db.execute(
+            "UPDATE safe SET balance = balance + ?",
+            (amount,)
+        )
+
         await db.commit()
-    await log_action(f"{interaction.user} изъял {amount}$ из сейфа")
-    await interaction.response.send_message("Изъято")
+
+    await log(f"{interaction.user} added {amount}$ to safe")
+
+    await interaction.response.send_message("✅ Добавлено")
+
+@tree.command(guild=discord.Object(id=GUILD_ID))
+async def safe_remove(interaction: discord.Interaction, amount:int):
+
+    async with aiosqlite.connect(DB) as db:
+
+        await db.execute(
+            "UPDATE safe SET balance = balance - ?",
+            (amount,)
+        )
+
+        await db.commit()
+
+    await log(f"{interaction.user} removed {amount}$ from safe")
+
+    await interaction.response.send_message("✅ Убрано")
 
 # ================= WAREHOUSE =================
 
-@bot.tree.command(guild=discord.Object(id=GUILD_ID))
-async def warehouse_add(interaction: discord.Interaction, name:str, amount:int):
-    async with aiosqlite.connect(DB_NAME) as db:
+@tree.command(guild=discord.Object(id=GUILD_ID))
+async def warehouse(interaction: discord.Interaction):
+
+    async with aiosqlite.connect(DB) as db:
+
+        cursor = await db.execute("SELECT * FROM warehouse")
+
+        rows = await cursor.fetchall()
+
+    if not rows:
+
+        await interaction.response.send_message("Пусто")
+        return
+
+    text = ""
+
+    for item, amount in rows:
+        text += f"{item}: {amount}\n"
+
+    await interaction.response.send_message(text)
+
+@tree.command(guild=discord.Object(id=GUILD_ID))
+async def warehouse_add(interaction: discord.Interaction, item:str, amount:int):
+
+    async with aiosqlite.connect(DB) as db:
+
         await db.execute("""
         INSERT INTO warehouse VALUES (?,?)
-        ON CONFLICT(name) DO UPDATE SET amount=amount+?
-        """,(name,amount,amount))
-        await db.commit()
-    await log_action(f"{interaction.user} добавил {name} x{amount}")
-    await interaction.response.send_message("Добавлено")
+        ON CONFLICT(item)
+        DO UPDATE SET amount = amount + ?
+        """,(item,amount,amount))
 
-@bot.tree.command(guild=discord.Object(id=GUILD_ID))
-async def warehouse(interaction: discord.Interaction):
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT * FROM warehouse")
-        rows = await cursor.fetchall()
-    text = "\n".join([f"{r[0]}: {r[1]}" for r in rows]) or "Пусто"
-    await interaction.response.send_message(f"📦 Склад:\n{text}")
+        await db.commit()
+
+    await log(f"{interaction.user} added {item} {amount}")
+
+    await interaction.response.send_message("Добавлено")
 
 # ================= GUNS =================
 
-@bot.tree.command(guild=discord.Object(id=GUILD_ID))
-async def gun_add(interaction: discord.Interaction, name:str, amount:int):
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("""
-        INSERT INTO guns VALUES (?,?)
-        ON CONFLICT(name) DO UPDATE SET amount=amount+?
-        """,(name,amount,amount))
-        await db.commit()
-    await log_action(f"{interaction.user} добавил оружие {name} x{amount}")
-    await interaction.response.send_message("Добавлено")
-
-@bot.tree.command(guild=discord.Object(id=GUILD_ID))
+@tree.command(guild=discord.Object(id=GUILD_ID))
 async def guns(interaction: discord.Interaction):
-    async with aiosqlite.connect(DB_NAME) as db:
+
+    async with aiosqlite.connect(DB) as db:
+
         cursor = await db.execute("SELECT * FROM guns")
+
         rows = await cursor.fetchall()
-    text = "\n".join([f"{r[0]}: {r[1]}" for r in rows]) or "Нет оружия"
-    await interaction.response.send_message(f"🔫 Оружие:\n{text}")
 
-# ================= TASK SYSTEM =================
+    if not rows:
 
-@bot.tree.command(guild=discord.Object(id=GUILD_ID))
-async def task_create(interaction: discord.Interaction, title:str, user:discord.Member):
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("INSERT INTO tasks (title,responsible,status) VALUES (?,?,?)",
-                         (title,str(user),"В процессе"))
-        await db.commit()
-    await interaction.response.send_message("Задача создана")
+        await interaction.response.send_message("Нет оружия")
+        return
 
-@bot.tree.command(guild=discord.Object(id=GUILD_ID))
-async def tasks_list(interaction: discord.Interaction):
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT * FROM tasks")
-        rows = await cursor.fetchall()
-    text = "\n".join([f"{r[0]}. {r[1]} — {r[3]}" for r in rows]) or "Нет задач"
+    text=""
+
+    for gun, amount in rows:
+
+        text+=f"{gun}: {amount}\n"
+
     await interaction.response.send_message(text)
 
-# ================= WARN SYSTEM =================
+@tree.command(guild=discord.Object(id=GUILD_ID))
+async def gun_add(interaction: discord.Interaction, gun:str, amount:int):
 
-@bot.tree.command(guild=discord.Object(id=GUILD_ID))
-async def warn(interaction: discord.Interaction, user:discord.Member):
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT count FROM warnings WHERE user_id=?",(user.id,))
-        row = await cursor.fetchone()
-        if row:
-            await db.execute("UPDATE warnings SET count=count+1 WHERE user_id=?",(user.id,))
-        else:
-            await db.execute("INSERT INTO warnings VALUES (?,1)",(user.id,))
+    async with aiosqlite.connect(DB) as db:
+
+        await db.execute("""
+        INSERT INTO guns VALUES (?,?)
+        ON CONFLICT(gun)
+        DO UPDATE SET amount = amount + ?
+        """,(gun,amount,amount))
+
         await db.commit()
-    await interaction.response.send_message("Выдан выговор")
 
-# ================= GIVEAWAY =================
+    await log(f"{interaction.user} added gun {gun}")
 
-@bot.tree.command(guild=discord.Object(id=GUILD_ID))
-async def giveaway(interaction: discord.Interaction, minutes:int, winners:int, prize:str):
-    await interaction.response.send_message(f"🎉 Розыгрыш: {prize} через {minutes} минут")
-    await asyncio.sleep(minutes*60)
-    members = interaction.guild.members
-    winners_list = random.sample(members, min(winners, len(members)))
-    text = "\n".join([w.mention for w in winners_list])
-    await interaction.followup.send(f"🏆 Победители:\n{text}")
+    await interaction.response.send_message("Оружие добавлено")
 
-# ================= WEEKLY REPORT =================
+# ================= MODERATION =================
 
-@tasks.loop(hours=168)
-async def weekly_report():
-    channel = bot.get_channel(LOG_CHANNEL_ID)
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT balance FROM safe")
-        balance = (await cursor.fetchone())[0]
-    await channel.send(f"📊 Недельный отчёт\nБаланс сейфа: {balance}$")
+@tree.command(guild=discord.Object(id=GUILD_ID))
+async def kick(interaction: discord.Interaction, member:discord.Member, reason:str=""):
 
-# ================= CONTROL PANEL =================
+    await member.kick(reason=reason)
 
-class MainPanel(discord.ui.View):
+    await log(f"{member} kicked")
+
+    await interaction.response.send_message("Кикнут")
+
+@tree.command(guild=discord.Object(id=GUILD_ID))
+async def ban(interaction: discord.Interaction, member:discord.Member, reason:str=""):
+
+    await member.ban(reason=reason)
+
+    await log(f"{member} banned")
+
+    await interaction.response.send_message("Забанен")
+
+# ================= SAY =================
+
+@tree.command(guild=discord.Object(id=GUILD_ID))
+async def say(interaction: discord.Interaction, text:str):
+
+    await interaction.channel.send(text)
+
+    await interaction.response.send_message("Отправлено", ephemeral=True)
+
+# ================= EMBED =================
+
+@tree.command(guild=discord.Object(id=GUILD_ID))
+async def embed(interaction: discord.Interaction, title:str, text:str):
+
+    emb = discord.Embed(
+        title=title,
+        description=text,
+        color=0x00ff88
+    )
+
+    await interaction.channel.send(embed=emb)
+
+    await interaction.response.send_message("Embed отправлен", ephemeral=True)
+
+# ================= PANEL =================
+
+class Control(discord.ui.View):
+
     @discord.ui.button(label="Сейф", style=discord.ButtonStyle.green)
     async def safe_btn(self, interaction, button):
-        await interaction.response.send_message("Используй /safe", ephemeral=True)
+
+        async with aiosqlite.connect(DB) as db:
+
+            cursor = await db.execute("SELECT balance FROM safe")
+
+            bal = (await cursor.fetchone())[0]
+
+        await interaction.response.send_message(f"💰 {bal}$", ephemeral=True)
 
     @discord.ui.button(label="Склад", style=discord.ButtonStyle.blurple)
     async def wh_btn(self, interaction, button):
-        await interaction.response.send_message("Используй /warehouse", ephemeral=True)
 
-    @discord.ui.button(label="Оружие", style=discord.ButtonStyle.red)
-    async def gun_btn(self, interaction, button):
-        await interaction.response.send_message("Используй /guns", ephemeral=True)
+        async with aiosqlite.connect(DB) as db:
 
-@bot.tree.command(guild=discord.Object(id=GUILD_ID))
+            cursor = await db.execute("SELECT * FROM warehouse")
+
+            rows = await cursor.fetchall()
+
+        text=""
+
+        for i,a in rows:
+
+            text+=f"{i}:{a}\n"
+
+        if text=="": text="Пусто"
+
+        await interaction.response.send_message(text, ephemeral=True)
+
+@tree.command(guild=discord.Object(id=GUILD_ID))
 async def panel(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="👑 HUBsters Family PRO",
-        description="Центр управления семьёй",
+
+    embed=discord.Embed(
+        title="HUBsters Family CONTROL",
+        description="Панель управления",
         color=0x00ff88
     )
-    await interaction.response.send_message(embed=embed, view=MainPanel())
+
+    await interaction.response.send_message(
+        embed=embed,
+        view=Control()
+    )
 
 # ================= START =================
 
