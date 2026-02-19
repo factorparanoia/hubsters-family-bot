@@ -81,7 +81,7 @@ function hasLink(content) {
   return /(https?:\/\/|www\.)\S+/i.test(content);
 }
 
-client.on('ready', async () => {
+client.once('clientReady', async () => {
   console.log(`Bot started as ${client.user.tag}`);
   await registerCommandsOnStartup().catch((error) => {
     console.error('[commands] startup sync failed:', error);
