@@ -13,8 +13,16 @@
 - Backup: `backup_create`, `backup_load` (конфіг+снапшот)
 - Trigger/Autoresponse: `trigger`, `autoresponse`
 - Temp Voice: `tempvoice create/delete`
-- Music queue (черга): `music_play`, `music_skip`, `music_stop`
+- **Music playback**: `music_play`, `music_skip`, `music_stop`
+  - `music_play` приймає URL або пошуковий запит, бот приєднується в ваш voice-канал і відтворює звук
+  - бот підключається з `selfDeaf: true` (не слухає людей у каналі)
 - Аналітика і логи: `analytics`, `logstats`
+
+## Якщо бот не підключається до voice
+1. Переконайтесь, що бот має права **Connect** і **Speak** у voice-каналі.
+2. Переконайтесь, що voice-канал не повний (або є право Move Members).
+3. Запустіть `/music_play` тільки коли ви вже в голосовому каналі.
+4. Подивіться відповідь бота: він тепер віддає точну причину помилки підключення.
 
 ## Railway
 - Налаштуйте `.env` (`DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_GUILD_ID`)

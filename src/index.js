@@ -18,6 +18,7 @@ const { getGuildConfig, setGuildConfig, upsertReactionRole } = require('./lib/co
 const { addXp, getRank, getTop } = require('./lib/levels');
 const { commandDefinitions } = require('./command-definitions');
 const { startWebPanel } = require('./web/panel');
+const music = require('./lib/music');
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
@@ -422,21 +423,26 @@ async function handleInteraction(interaction) {
   }
   if (interaction.commandName === 'music_play') {
     const q = interaction.options.getString('query', true);
-    const queue = getJson(`music-${gid}`, []);
-    queue.push({ query: q, by: interaction.user.id, addedAt: Date.now() });
-    setJson(`music-${gid}`, queue);
-    return interaction.reply(`🎵 Додано у чергу: ${q}`);
+    const me = await guild.members.fetch(interaction.user.id);
+
+    if (!me.voice?.channelId) {
+      return interaction.reply({ content: 'Спочатку зайдіть у голосовий канал.', ephemeral: true });
+    }
+
+    try {
+      const result = await music.enqueue(me, q, interaction.channel.id);
+      return interaction.reply(`🎵 Додано: **${result.title}**`);
+    } catch (error) {
+      return interaction.reply({ content: `Не вдалося запустити музику: ${error.message}`, ephemeral: true });
+    }
   }
   if (interaction.commandName === 'music_skip') {
-    const queue = getJson(`music-${gid}`, []);
-    if (!queue.length) return interaction.reply('Черга порожня.');
-    const skipped = queue.shift();
-    setJson(`music-${gid}`, queue);
-    return interaction.reply(`⏭ Пропущено: ${skipped.query}`);
+    const ok = music.skip(gid);
+    return interaction.reply(ok ? '⏭ Трек пропущено.' : 'Немає активного відтворення.');
   }
   if (interaction.commandName === 'music_stop') {
-    setJson(`music-${gid}`, []);
-    return interaction.reply('⏹ Чергу очищено.');
+    const ok = music.stop(gid);
+    return interaction.reply(ok ? '⏹ Відтворення зупинено, чергу очищено.' : 'Немає активного відтворення.');
   }
   if (interaction.commandName === 'tempvoice') {
     const sub = interaction.options.getSubcommand();
