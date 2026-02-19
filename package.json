@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/index.js",
     "register": "node src/register-commands.js",
-    "check": "node --check src/index.js && node --check src/register-commands.js && node --check src/command-definitions.js && node --check src/web/panel.js && node --check src/lib/config.js && node --check src/lib/levels.js && node --check src/lib/music.js"
+    "check": "node --check src/index.js && node --check src/register-commands.js && node --check src/command-definitions.js && node --check src/web/panel.js && node --check src/lib/config.js && node --check src/lib/levels.js && node --check src/lib/music.js && node --check src/lib/activity.js && node --check src/lib/tickets.js"
   },
   "engines": {
     "node": ">=20"

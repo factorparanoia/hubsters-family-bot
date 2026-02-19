@@ -1,7 +1,10 @@
 require('dotenv').config();
 
 const {
+  ActionRowBuilder,
   AuditLogEvent,
+  ButtonBuilder,
+  ButtonStyle,
   ChannelType,
   Client,
   EmbedBuilder,
@@ -19,6 +22,15 @@ const { addXp, getRank, getTop } = require('./lib/levels');
 const { commandDefinitions } = require('./command-definitions');
 const { startWebPanel } = require('./web/panel');
 const music = require('./lib/music');
+const {
+  trackMessage,
+  trackCommand,
+  trackVoiceJoin,
+  trackVoiceLeave,
+  getUserActivity,
+  getChannelActivity
+} = require('./lib/activity');
+const { nextTicketNumber, saveTicket, getTicketByChannel, closeTicket } = require('./lib/tickets');
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
@@ -119,9 +131,29 @@ client.on('guildMemberRemove', (member) => {
   logEvent(member.guild.id, { type: 'member_leave', userId: member.id, username: member.user?.tag ?? member.id });
 });
 
+client.on('voiceStateUpdate', (oldState, newState) => {
+  if (!newState.guild || newState.member?.user?.bot) return;
+  const gid = newState.guild.id;
+  const uid = newState.id;
+
+  if (!oldState.channelId && newState.channelId) {
+    trackVoiceJoin(gid, uid, newState.channelId);
+  }
+
+  if (oldState.channelId && !newState.channelId) {
+    trackVoiceLeave(gid, uid);
+  }
+
+  if (oldState.channelId && newState.channelId && oldState.channelId !== newState.channelId) {
+    trackVoiceLeave(gid, uid);
+    trackVoiceJoin(gid, uid, newState.channelId);
+  }
+});
+
 client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
   const gid = message.guild.id;
+  trackMessage(gid, message);
   const config = getGuildConfig(gid);
   const lower = message.content.toLowerCase();
 
@@ -240,14 +272,42 @@ async function handleInteraction(interaction) {
   }
   if (interaction.commandName === 'userinfo') {
     const m = interaction.options.getMember('target') || interaction.member;
-    const embed = new EmbedBuilder().setTitle(`Користувач: ${m.user.tag}`).addFields(
-      { name: 'ID', value: m.id },
-      { name: 'Ролей', value: String(m.roles.cache.size - 1) }
-    );
+    const stats = getUserActivity(gid, m.id);
+    const topChannels = stats
+      ? Object.entries(stats.channels || {})
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 5)
+          .map(([id, c]) => `<#${id}>: ${c}`)
+          .join('\n')
+      : 'Немає даних';
+
+    const embed = new EmbedBuilder()
+      .setTitle(`Користувач: ${m.user.tag}`)
+      .addFields(
+        { name: 'ID', value: m.id, inline: true },
+        { name: 'Створено акаунт', value: `<t:${Math.floor(m.user.createdTimestamp / 1000)}:F>`, inline: false },
+        { name: 'Приєднався до сервера', value: `<t:${Math.floor(m.joinedTimestamp / 1000)}:F>`, inline: false },
+        { name: 'Ролей', value: String(m.roles.cache.size - 1), inline: true },
+        { name: 'Повідомлень', value: String(stats?.messages || 0), inline: true },
+        { name: 'Команд', value: String(stats?.commands || 0), inline: true },
+        { name: 'Голос (сек)', value: String(stats?.voiceSeconds || 0), inline: true },
+        { name: 'Заходів у voice', value: String(stats?.voiceJoins || 0), inline: true },
+        { name: 'Вкладень', value: String(stats?.attachments || 0), inline: true },
+        { name: 'Останнє повідомлення', value: stats?.lastMessageAt || '—', inline: false },
+        { name: 'Топ активних каналів', value: topChannels || '—', inline: false }
+      )
+      .setThumbnail(m.user.displayAvatarURL({ size: 512 }))
+      .setColor(0x5865f2);
+
     return interaction.reply({ embeds: [embed] });
   }
   if (interaction.commandName === 'serverinfo') {
-    return interaction.reply(`Сервер: **${guild.name}**\nУчасників: **${guild.memberCount}**\nКаналів: **${guild.channels.cache.size}**`);
+    const channels = guild.channels.cache;
+    const textCount = channels.filter((c) => c.type === ChannelType.GuildText).size;
+    const voiceCount = channels.filter((c) => c.type === ChannelType.GuildVoice).size;
+    return interaction.reply(
+      `Сервер: **${guild.name}**\nID: **${guild.id}**\nУчасників: **${guild.memberCount}**\nКаналів: **${channels.size}** (text: ${textCount}, voice: ${voiceCount})\nРолей: **${guild.roles.cache.size}**`
+    );
   }
   if (interaction.commandName === 'avatar') {
     const u = interaction.options.getUser('target') || interaction.user;
@@ -259,7 +319,18 @@ async function handleInteraction(interaction) {
   }
   if (interaction.commandName === 'channelinfo') {
     const c = interaction.options.getChannel('channel', true);
-    return interaction.reply(`Канал: ${c.name}\nID: ${c.id}\nТип: ${c.type}`);
+    const stats = getChannelActivity(gid, c.id);
+    const topUsers = stats
+      ? Object.entries(stats.users || {})
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 8)
+          .map(([id, count]) => `<@${id}>: ${count}`)
+          .join('\n')
+      : 'Немає даних';
+
+    return interaction.reply(
+      `Канал: **${c.name}**\nID: **${c.id}**\nТип: **${c.type}**\nПовідомлень: **${stats?.messages || 0}**\nНайактивніші користувачі:\n${topUsers}`
+    );
   }
   if (interaction.commandName === 'lock') {
     await interaction.channel.permissionOverwrites.edit(guild.roles.everyone, { SendMessages: false });
@@ -565,6 +636,44 @@ async function handleInteraction(interaction) {
     }
     return interaction.reply(cfg.automod.blockedWords.join(', ') || 'Список порожній.');
   }
+  if (interaction.commandName === 'ticket_panel') {
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('ticket_open').setLabel('Открыть').setStyle(ButtonStyle.Success)
+    );
+
+    const embed = new EmbedBuilder()
+      .setTitle('Панель тикетов')
+      .setDescription(
+        'Нажмите кнопку **Открыть**, чтобы создать персональный тикет.\n\n' +
+          '**Условия тикета:**\n- Один тикет на проблему.\n- Опишите суть подробно.\n- Соблюдайте правила сервера.'
+      )
+      .setColor(0x2b2d31);
+
+    await interaction.channel.send({ embeds: [embed], components: [row] });
+    return interaction.reply({ content: 'Панель тикетов опубликована.', ephemeral: true });
+  }
+
+  if (interaction.commandName === 'activity_user') {
+    const user = interaction.options.getUser('target') || interaction.user;
+    const stats = getUserActivity(gid, user.id);
+    if (!stats) return interaction.reply('Дані активності відсутні.');
+    return interaction.reply(
+      `Активність <@${user.id}>\nПовідомлень: ${stats.messages}\nКоманд: ${stats.commands}\nВкладень: ${stats.attachments}\nVoice секунд: ${stats.voiceSeconds}\nVoice входів: ${stats.voiceJoins}\nОстаннє повідомлення: ${stats.lastMessageAt || '—'}`
+    );
+  }
+
+  if (interaction.commandName === 'activity_channel') {
+    const ch = interaction.options.getChannel('channel') || interaction.channel;
+    const stats = getChannelActivity(gid, ch.id);
+    if (!stats) return interaction.reply('По каналу ще немає статистики.');
+    const users = Object.entries(stats.users || {})
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([id, c]) => `<@${id}>: ${c}`)
+      .join('\n');
+    return interaction.reply(`Активність каналу ${ch}:\nПовідомлень: ${stats.messages}\nТоп користувачів:\n${users || '—'}`);
+  }
+
   if (interaction.commandName === 'analytics') {
     const analytics = buildGuildAnalytics(guild, getJson(`events-${gid}`, []));
     return interaction.reply(`Учасники: ${analytics.members}\nJoins: ${analytics.joins}\nLeaves: ${analytics.leaves}\nWarn: ${analytics.warnings}`);
@@ -578,6 +687,79 @@ async function handleInteraction(interaction) {
 
 client.on('interactionCreate', async (interaction) => {
   try {
+    if (interaction.isButton()) {
+      const guild = interaction.guild;
+      if (!guild) return;
+
+      if (interaction.customId === 'ticket_open') {
+        const number = String(nextTicketNumber(guild.id)).padStart(4, '0');
+        const channel = await guild.channels.create({
+          name: `ticket-${number}`,
+          type: ChannelType.GuildText,
+          permissionOverwrites: [
+            { id: guild.roles.everyone.id, deny: [Perms.ViewChannel] },
+            { id: interaction.user.id, allow: [Perms.ViewChannel, Perms.SendMessages, Perms.ReadMessageHistory] },
+            { id: guild.members.me.id, allow: [Perms.ViewChannel, Perms.SendMessages, Perms.ManageChannels, Perms.ReadMessageHistory] }
+          ]
+        });
+
+        saveTicket(guild.id, {
+          number,
+          channelId: channel.id,
+          creatorId: interaction.user.id,
+          creatorTag: interaction.user.tag,
+          createdAt: new Date().toISOString(),
+          status: 'open'
+        });
+
+        const closeRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('ticket_close').setLabel('Закрыть').setStyle(ButtonStyle.Danger)
+        );
+
+        const embed = new EmbedBuilder()
+          .setTitle(`Тикет #${number}`)
+          .setDescription(
+            'Привет! Это ваш приватный тикет.\n\n' +
+              '**Условия:**\n- Опишите проблему подробно.\n- Не спамьте.\n- Соблюдайте правила сервера.\n\n' +
+              'Ниже есть кнопка закрытия тикета.'
+          )
+          .addFields(
+            { name: 'Создатель', value: `<@${interaction.user.id}>`, inline: true },
+            { name: 'Номер', value: `#${number}`, inline: true }
+          )
+          .setColor(0x5865f2);
+
+        await channel.send({ content: `<@${interaction.user.id}>`, embeds: [embed], components: [closeRow] });
+        await interaction.reply({ content: `Тикет создан: ${channel}`, ephemeral: true });
+        return;
+      }
+
+      if (interaction.customId === 'ticket_close') {
+        const ticket = getTicketByChannel(guild.id, interaction.channel.id);
+        if (!ticket) {
+          await interaction.reply({ content: 'Это не тикет-канал.', ephemeral: true });
+          return;
+        }
+
+        const isOwner = ticket.creatorId === interaction.user.id;
+        const hasMod = interaction.member.permissions.has(PermissionFlagsBits.ManageChannels);
+        if (!isOwner && !hasMod) {
+          await interaction.reply({ content: 'Закрыть тикет может автор или модератор.', ephemeral: true });
+          return;
+        }
+
+        closeTicket(guild.id, interaction.channel.id, interaction.user.id);
+        await interaction.reply('Тикет закрывается через 3 секунды...');
+        setTimeout(() => interaction.channel.delete().catch(() => null), 3000);
+        return;
+      }
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.guild) {
+      trackCommand(interaction.guild.id, interaction.user.id, interaction.commandName);
+    }
+
     await handleInteraction(interaction);
   } catch (error) {
     console.error('[interaction-error]', error);

@@ -227,6 +227,15 @@ const commandDefinitions = [
     )
     .addSubcommand((sub) => sub.setName('word_list').setDescription('Список заборонених слів')),
   new SlashCommandBuilder().setName('analytics').setDescription('Аналітика сервера за 24 години'),
+  new SlashCommandBuilder().setName('ticket_panel').setDescription('Опублікувати панель відкриття тікетів'),
+  new SlashCommandBuilder()
+    .setName('activity_user')
+    .setDescription('Детальна активність користувача')
+    .addUserOption((option) => option.setName('target').setDescription('Користувач').setRequired(false)),
+  new SlashCommandBuilder()
+    .setName('activity_channel')
+    .setDescription('Детальна активність каналу')
+    .addChannelOption((option) => option.setName('channel').setDescription('Канал').setRequired(false)),
   new SlashCommandBuilder().setName('commands_ua').setDescription('Довідка по командах (UA)')
 ];
 
