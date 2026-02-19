@@ -1,28 +1,22 @@
-# Discord Management Bot (Railway) + Web Panel
+# HUB Bot (UA) — повнофункціональна заміна ProBot/CarlBot
 
-Оновлення: додано великий сумісний набір slash-команд у стилі **ProBot + CarlBot** та українізовані описи команд.
+У цій версії додано повну бізнес-логіку модулів, щоб сервер міг працювати без ProBot/CarlBot.
 
-## Що зроблено
-- Команди та описи перекладені українською для зручності адміністраторів.
-- Додано розширений compatibility-набір команд (модерація, utility, tickets, giveaways, music, backups, verify, reports тощо).
-- Для ключових модулів логіка вже працює: модерація, automod, рівні, welcome/autorole, reaction roles, analytics, архів, сейф/склад.
-- Для частини compatibility-команд додано безпечний fallback-відповідач (бот не мовчить, а пояснює, що команда в процесі повної реалізації).
+## Реалізовано модулі
+- Модерація: `kick`, `ban`, `unban`, `warn`, `warnings`, `clearwarns`, `mute`, `unmute`, `purge`, `lock`, `unlock`, `slowmode`
+- Utility: `userinfo`, `serverinfo`, `avatar`, `roleinfo`, `channelinfo`, `poll`, `reminder`
+- Community: `welcome`, `autorole`, `reactionrole`, `verify`, `suggest`, `report`, `ticket`
+- AutoMod: блокування посилань і заборонених слів
+- Економіка: `economy_balance`, `economy_daily`
+- Рівні: `rank`, `leveltop`
+- Giveaway: створення і reroll
+- Backup: `backup_create`, `backup_load` (конфіг+снапшот)
+- Trigger/Autoresponse: `trigger`, `autoresponse`
+- Temp Voice: `tempvoice create/delete`
+- Music queue (черга): `music_play`, `music_skip`, `music_stop`
+- Аналітика і логи: `analytics`, `logstats`
 
-## Чому це важливо
-В ProBot/CarlBot дуже великий обсяг команд і модулів. У цій версії:
-1. Командний інтерфейс максимально наближений за набором.
-2. Критичні модулі вже робочі.
-3. Решта модулів має сумісні entry points і зрозумілий статус впровадження.
-
-## Якщо не з'являються команди
-- Перевірте `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_GUILD_ID`.
-- Переконайтесь, що бот запрошений із scope: `bot applications.commands`.
-- Подивіться логи старта: має бути `[commands] synced ...`.
-- Для миттєвого оновлення команд залишайте `DISCORD_GUILD_ID` (guild commands).
-
-## Швидкий старт
-```bash
-npm install
-cp .env.example .env
-npm start
-```
+## Railway
+- Налаштуйте `.env` (`DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_GUILD_ID`)
+- Запуск: `npm start`
+- Команди синхронізуються автоматично при старті бота.

@@ -9,7 +9,8 @@ const {
   Partials,
   PermissionFlagsBits,
   REST,
-  Routes
+  Routes,
+  PermissionFlagsBits: Perms
 } = require('discord.js');
 const { appendJsonArray, readJson, writeJson } = require('./lib/store');
 const { buildGuildAnalytics } = require('./lib/analytics');
@@ -21,10 +22,7 @@ const { startWebPanel } = require('./web/panel');
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;
 const guildId = process.env.DISCORD_GUILD_ID;
-
-if (!token) {
-  throw new Error('DISCORD_TOKEN is not set in environment');
-}
+if (!token) throw new Error('DISCORD_TOKEN is not set in environment');
 
 const client = new Client({
   intents: [
@@ -32,546 +30,549 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMessageReactions,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates
   ],
   partials: [Partials.Channel, Partials.GuildMember, Partials.Message, Partials.Reaction, Partials.User]
 });
 
-function logEvent(guildIdValue, payload) {
-  appendJsonArray(`events-${guildIdValue}`, {
-    ...payload,
-    timestamp: Date.now()
-  });
+const runtime = { giveaways: new Map(), reminders: new Map() };
+
+function logEvent(gid, payload) {
+  appendJsonArray(`events-${gid}`, { ...payload, timestamp: Date.now() });
 }
 
-async function registerCommandsOnStartup() {
-  const autoSync = process.env.AUTO_SYNC_COMMANDS !== 'false';
-  if (!autoSync) return;
-
-  if (!clientId) {
-    console.warn('[commands] DISCORD_CLIENT_ID is missing, auto-sync skipped');
-    return;
-  }
-
-  const rest = new REST({ version: '10' }).setToken(token);
-  const body = commandDefinitions.map((command) => command.toJSON());
-
-  if (guildId) {
-    await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body });
-    console.log(`[commands] synced ${body.length} guild commands to ${guildId}`);
-    return;
-  }
-
-  await rest.put(Routes.applicationCommands(clientId), { body });
-  console.log(`[commands] synced ${body.length} global commands`);
+function getJson(name, fallback) {
+  return readJson(name, fallback);
 }
 
-async function sendLogMessage(guild, title, fields) {
-  const config = getGuildConfig(guild.id);
-  if (!config.logChannelId) return;
-
-  const channel = guild.channels.cache.get(config.logChannelId);
-  if (!channel || channel.type !== ChannelType.GuildText) return;
-
-  const embed = new EmbedBuilder().setTitle(title).setColor(0x1f8b4c).addFields(fields).setTimestamp();
-  await channel.send({ embeds: [embed] });
+function setJson(name, value) {
+  writeJson(name, value);
 }
 
 function hasLink(content) {
   return /(https?:\/\/|www\.)\S+/i.test(content);
 }
 
-const implementedCommands = new Set([
-  'say','kick','ban','warn','warnings','purge','rank','leveltop','userinfo','safe','warehouse','archive','config','reactionrole','automod','analytics','commands_ua'
-]);
+async function registerCommandsOnStartup() {
+  if (process.env.AUTO_SYNC_COMMANDS === 'false') return;
+  if (!clientId) return;
+  const rest = new REST({ version: '10' }).setToken(token);
+  const body = commandDefinitions.map((c) => c.toJSON());
+  if (guildId) {
+    await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body });
+    console.log(`[commands] synced ${body.length} guild commands to ${guildId}`);
+  } else {
+    await rest.put(Routes.applicationCommands(clientId), { body });
+    console.log(`[commands] synced ${body.length} global commands`);
+  }
+}
+
+async function sendLogMessage(guild, title, fields) {
+  const config = getGuildConfig(guild.id);
+  if (!config.logChannelId) return;
+  const channel = guild.channels.cache.get(config.logChannelId);
+  if (!channel || channel.type !== ChannelType.GuildText) return;
+  const embed = new EmbedBuilder().setTitle(title).addFields(fields).setColor(0x1f8b4c).setTimestamp();
+  await channel.send({ embeds: [embed] });
+}
+
+function getEconomy(gid) {
+  return getJson(`economy-${gid}`, {});
+}
+
+function setEconomy(gid, data) {
+  setJson(`economy-${gid}`, data);
+}
+
+function getTriggers(gid) {
+  return getJson(`triggers-${gid}`, {});
+}
+
+function setTriggers(gid, data) {
+  setJson(`triggers-${gid}`, data);
+}
 
 client.once('clientReady', async () => {
   console.log(`Bot started as ${client.user.tag}`);
-  await registerCommandsOnStartup().catch((error) => {
-    console.error('[commands] startup sync failed:', error);
-  });
+  await registerCommandsOnStartup().catch((e) => console.error('[commands] startup sync failed:', e));
   startWebPanel(client);
 });
 
-client.on('error', (error) => {
-  console.error('[client-error]', error);
-});
+client.on('error', (error) => console.error('[client-error]', error));
 
 client.on('guildMemberAdd', async (member) => {
-  logEvent(member.guild.id, {
-    type: 'member_join',
-    userId: member.id,
-    username: member.user.tag
-  });
-
+  logEvent(member.guild.id, { type: 'member_join', userId: member.id, username: member.user.tag });
   const config = getGuildConfig(member.guild.id);
-
-  if (config.autoRoleId) {
-    await member.roles.add(config.autoRoleId).catch(() => null);
-  }
-
+  if (config.autoRoleId) await member.roles.add(config.autoRoleId).catch(() => null);
   if (config.welcomeEnabled && config.welcomeChannelId) {
     const channel = member.guild.channels.cache.get(config.welcomeChannelId);
-    if (channel && channel.type === ChannelType.GuildText) {
-      const text = config.welcomeMessage
-        .replaceAll('{user}', `<@${member.id}>`)
-        .replaceAll('{server}', member.guild.name);
+    if (channel?.type === ChannelType.GuildText) {
+      const text = config.welcomeMessage.replaceAll('{user}', `<@${member.id}>`).replaceAll('{server}', member.guild.name);
       await channel.send(text);
     }
   }
 });
 
 client.on('guildMemberRemove', (member) => {
-  logEvent(member.guild.id, {
-    type: 'member_leave',
-    userId: member.id,
-    username: member.user?.tag ?? member.id
-  });
+  logEvent(member.guild.id, { type: 'member_leave', userId: member.id, username: member.user?.tag ?? member.id });
 });
 
 client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
-
-  const config = getGuildConfig(message.guild.id);
+  const gid = message.guild.id;
+  const config = getGuildConfig(gid);
   const lower = message.content.toLowerCase();
 
   if (config.automod.linksBlocked && hasLink(message.content)) {
     await message.delete().catch(() => null);
-    logEvent(message.guild.id, {
-      type: 'automod_link_delete',
-      userId: message.author.id,
-      username: message.author.tag,
-      content: message.content.slice(0, 180)
-    });
+    logEvent(gid, { type: 'automod_link_delete', userId: message.author.id, content: message.content.slice(0, 180) });
     return;
   }
-
   const blockedWord = config.automod.blockedWords.find((word) => lower.includes(word.toLowerCase()));
   if (blockedWord) {
     await message.delete().catch(() => null);
-    logEvent(message.guild.id, {
-      type: 'automod_word_delete',
-      word: blockedWord,
-      userId: message.author.id,
-      username: message.author.tag,
-      content: message.content.slice(0, 180)
-    });
+    logEvent(gid, { type: 'automod_word_delete', userId: message.author.id, word: blockedWord });
     return;
   }
+
+  const triggers = getTriggers(gid);
+  const triggerKey = Object.keys(triggers).find((k) => lower.includes(k.toLowerCase()));
+  if (triggerKey) await message.reply(triggers[triggerKey]).catch(() => null);
 
   if (config.suggestionsChannelId && message.channel.id === config.suggestionsChannelId) {
     await message.react('✅').catch(() => null);
     await message.react('❌').catch(() => null);
-    logEvent(message.guild.id, {
-      type: 'suggestion',
-      userId: message.author.id,
-      username: message.author.tag,
-      content: message.content.slice(0, 250)
-    });
+    logEvent(gid, { type: 'suggestion', userId: message.author.id, content: message.content.slice(0, 250) });
   }
 
   if (config.leveling.enabled && message.content.length >= 3) {
-    const gain = 10 + Math.floor(Math.random() * 16);
-    const status = addXp(message.guild.id, message.author.id, gain);
-
+    const status = addXp(gid, message.author.id, 10 + Math.floor(Math.random() * 16));
     if (status.leveledUp) {
-      const announceChannel =
-        (config.leveling.levelUpChannelId && message.guild.channels.cache.get(config.leveling.levelUpChannelId)) ||
-        message.channel;
-      await announceChannel
-        .send(`🎉 <@${message.author.id}> повысил уровень до **${status.level}**!`)
-        .catch(() => null);
-      logEvent(message.guild.id, {
-        type: 'level_up',
-        userId: message.author.id,
-        username: message.author.tag,
-        level: status.level
-      });
+      await message.channel.send(`🎉 <@${message.author.id}> підвищив рівень до **${status.level}**!`).catch(() => null);
+      logEvent(gid, { type: 'level_up', userId: message.author.id, level: status.level });
     }
   }
 });
 
 client.on('messageDelete', (message) => {
   if (!message.guild || message.author?.bot) return;
-  logEvent(message.guild.id, {
-    type: 'message_delete',
-    userId: message.author?.id,
-    username: message.author?.tag,
-    content: message.content?.slice(0, 180) || '[empty]'
-  });
+  logEvent(message.guild.id, { type: 'message_delete', userId: message.author?.id, content: message.content?.slice(0, 180) || '' });
 });
 
 client.on('messageReactionAdd', async (reaction, user) => {
   if (user.bot || !reaction.message.guild) return;
-
-  const config = getGuildConfig(reaction.message.guild.id);
-  const bind = config.reactionRoles.find((item) => item.emoji === reaction.emoji.name);
+  const bind = getGuildConfig(reaction.message.guild.id).reactionRoles.find((x) => x.emoji === reaction.emoji.name);
   if (!bind) return;
-
   const member = await reaction.message.guild.members.fetch(user.id);
   await member.roles.add(bind.roleId).catch(() => null);
 });
 
 client.on('messageReactionRemove', async (reaction, user) => {
   if (user.bot || !reaction.message.guild) return;
-
-  const config = getGuildConfig(reaction.message.guild.id);
-  const bind = config.reactionRoles.find((item) => item.emoji === reaction.emoji.name);
+  const bind = getGuildConfig(reaction.message.guild.id).reactionRoles.find((x) => x.emoji === reaction.emoji.name);
   if (!bind) return;
-
   const member = await reaction.message.guild.members.fetch(user.id);
   await member.roles.remove(bind.roleId).catch(() => null);
 });
 
+async function handleInteraction(interaction) {
+  if (!interaction.isChatInputCommand() || !interaction.guild) return;
+  const guild = interaction.guild;
+  const gid = guild.id;
+
+  if (interaction.commandName === 'say') {
+    const text = interaction.options.getString('text', true);
+    await interaction.reply({ content: 'Надіслано.', ephemeral: true });
+    await interaction.channel.send(text);
+    return;
+  }
+  if (interaction.commandName === 'kick') {
+    const target = interaction.options.getMember('target');
+    const reason = interaction.options.getString('reason') || 'Без причини';
+    if (!target) return interaction.reply({ content: 'Користувача не знайдено.', ephemeral: true });
+    await target.kick(reason);
+    logEvent(gid, { type: 'kick', userId: target.id, moderatorId: interaction.user.id, reason });
+    return interaction.reply(`✅ Вигнано ${target.user.tag}`);
+  }
+  if (interaction.commandName === 'ban') {
+    const target = interaction.options.getUser('target', true);
+    const reason = interaction.options.getString('reason') || 'Без причини';
+    await guild.members.ban(target.id, { reason });
+    logEvent(gid, { type: 'ban', userId: target.id, moderatorId: interaction.user.id, reason });
+    return interaction.reply(`⛔ Забанено ${target.tag}`);
+  }
+  if (interaction.commandName === 'warn') {
+    const target = interaction.options.getUser('target', true);
+    const reason = interaction.options.getString('reason', true);
+    const key = `warnings-${gid}`;
+    const warnings = getJson(key, []);
+    warnings.push({ userId: target.id, reason, moderatorId: interaction.user.id, createdAt: new Date().toISOString() });
+    setJson(key, warnings);
+    return interaction.reply(`⚠️ Попередження видано ${target.tag}`);
+  }
+  if (interaction.commandName === 'warnings') {
+    const target = interaction.options.getUser('target', true);
+    const warnings = getJson(`warnings-${gid}`, []).filter((x) => x.userId === target.id);
+    if (!warnings.length) return interaction.reply('Попереджень немає.');
+    return interaction.reply(warnings.map((x, i) => `${i + 1}. ${x.reason}`).join('\n'));
+  }
+  if (interaction.commandName === 'clearwarns') {
+    const target = interaction.options.getUser('target', true);
+    const list = getJson(`warnings-${gid}`, []).filter((x) => x.userId !== target.id);
+    setJson(`warnings-${gid}`, list);
+    return interaction.reply(`Попередження для ${target.tag} очищено.`);
+  }
+  if (interaction.commandName === 'purge') {
+    const c = interaction.options.getInteger('count', true);
+    const deleted = await interaction.channel.bulkDelete(c, true);
+    return interaction.reply({ content: `🧹 Видалено ${deleted.size} повідомлень`, ephemeral: true });
+  }
+  if (interaction.commandName === 'rank') {
+    const rank = getRank(gid, interaction.user.id);
+    return interaction.reply(`🏅 Рівень: ${rank.level}, XP: ${rank.xp}, місце: ${rank.rank ?? '-'} / ${rank.totalRanked}`);
+  }
+  if (interaction.commandName === 'leveltop') {
+    const top = getTop(gid, interaction.options.getInteger('limit') || 10);
+    if (!top.length) return interaction.reply('Поки що порожньо.');
+    return interaction.reply(top.map((x) => `${x.rank}. <@${x.userId}> — lvl ${x.level}, xp ${x.xp}`).join('\n'));
+  }
+  if (interaction.commandName === 'userinfo') {
+    const m = interaction.options.getMember('target') || interaction.member;
+    const embed = new EmbedBuilder().setTitle(`Користувач: ${m.user.tag}`).addFields(
+      { name: 'ID', value: m.id },
+      { name: 'Ролей', value: String(m.roles.cache.size - 1) }
+    );
+    return interaction.reply({ embeds: [embed] });
+  }
+  if (interaction.commandName === 'serverinfo') {
+    return interaction.reply(`Сервер: **${guild.name}**\nУчасників: **${guild.memberCount}**\nКаналів: **${guild.channels.cache.size}**`);
+  }
+  if (interaction.commandName === 'avatar') {
+    const u = interaction.options.getUser('target') || interaction.user;
+    return interaction.reply(u.displayAvatarURL({ size: 1024 }));
+  }
+  if (interaction.commandName === 'roleinfo') {
+    const r = interaction.options.getRole('role', true);
+    return interaction.reply(`Роль: ${r.name}\nID: ${r.id}\nКолір: ${r.hexColor}`);
+  }
+  if (interaction.commandName === 'channelinfo') {
+    const c = interaction.options.getChannel('channel', true);
+    return interaction.reply(`Канал: ${c.name}\nID: ${c.id}\nТип: ${c.type}`);
+  }
+  if (interaction.commandName === 'lock') {
+    await interaction.channel.permissionOverwrites.edit(guild.roles.everyone, { SendMessages: false });
+    return interaction.reply('🔒 Канал закрито.');
+  }
+  if (interaction.commandName === 'unlock') {
+    await interaction.channel.permissionOverwrites.edit(guild.roles.everyone, { SendMessages: null });
+    return interaction.reply('🔓 Канал відкрито.');
+  }
+  if (interaction.commandName === 'slowmode') {
+    const s = interaction.options.getInteger('seconds', true);
+    await interaction.channel.setRateLimitPerUser(Math.max(0, Math.min(21600, s)));
+    return interaction.reply(`🐢 Slowmode: ${s} сек.`);
+  }
+  if (interaction.commandName === 'mute') {
+    const m = interaction.options.getMember('target');
+    const min = interaction.options.getInteger('minutes', true);
+    if (!m) return interaction.reply({ content: 'Користувача не знайдено.', ephemeral: true });
+    await m.timeout(min * 60 * 1000, interaction.options.getString('reason') || 'Таймаут');
+    return interaction.reply(`🔇 Таймаут для ${m.user.tag} на ${min} хв.`);
+  }
+  if (interaction.commandName === 'unmute') {
+    const m = interaction.options.getMember('target');
+    if (!m) return interaction.reply({ content: 'Користувача не знайдено.', ephemeral: true });
+    await m.timeout(null);
+    return interaction.reply(`🔊 Таймаут знято з ${m.user.tag}`);
+  }
+  if (interaction.commandName === 'unban') {
+    const uid = interaction.options.getString('userid', true);
+    await guild.members.unban(uid);
+    return interaction.reply(`✅ Розбанено ${uid}`);
+  }
+  if (interaction.commandName === 'poll') {
+    const q = interaction.options.getString('question', true);
+    const opts = interaction.options.getString('options', true).split(',').map((x) => x.trim()).filter(Boolean).slice(0, 9);
+    if (opts.length < 2) return interaction.reply({ content: 'Мінімум 2 варіанти.', ephemeral: true });
+    const nums = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣'];
+    const embed = new EmbedBuilder().setTitle('Опитування').setDescription(`${q}\n\n${opts.map((o,i)=>`${nums[i]} ${o}`).join('\n')}`);
+    const msg = await interaction.channel.send({ embeds: [embed] });
+    for (let i=0;i<opts.length;i++) await msg.react(nums[i]);
+    return interaction.reply({ content: 'Опитування створено.', ephemeral: true });
+  }
+  if (interaction.commandName === 'reminder') {
+    const min = interaction.options.getInteger('minutes', true);
+    const text = interaction.options.getString('text', true);
+    const key = `${gid}-${interaction.user.id}-${Date.now()}`;
+    const timer = setTimeout(async () => {
+      await interaction.channel.send(`⏰ <@${interaction.user.id}> нагадування: ${text}`).catch(() => null);
+      runtime.reminders.delete(key);
+    }, min * 60 * 1000);
+    runtime.reminders.set(key, timer);
+    return interaction.reply({ content: `Нагадування встановлено через ${min} хв.`, ephemeral: true });
+  }
+  if (interaction.commandName === 'ticket') {
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'create') {
+      const ch = await guild.channels.create({
+        name: `ticket-${interaction.user.username}`,
+        type: ChannelType.GuildText,
+        permissionOverwrites: [
+          { id: guild.roles.everyone.id, deny: [Perms.ViewChannel] },
+          { id: interaction.user.id, allow: [Perms.ViewChannel, Perms.SendMessages] }
+        ]
+      });
+      return interaction.reply({ content: `Тікет створено: ${ch}`, ephemeral: true });
+    }
+    if (!interaction.channel.name.startsWith('ticket-')) return interaction.reply({ content: 'Це не тікет-канал.', ephemeral: true });
+    await interaction.reply('Тікет буде закрито через 3 секунди...');
+    setTimeout(() => interaction.channel.delete().catch(() => null), 3000);
+    return;
+  }
+  if (interaction.commandName === 'giveaway') {
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'create') {
+      const minutes = interaction.options.getInteger('minutes', true);
+      const prize = interaction.options.getString('prize', true);
+      const winnersCount = interaction.options.getInteger('winners') || 1;
+      const msg = await interaction.channel.send(`🎉 Розіграш: **${prize}**\nТисни 🎉 для участі!\nЗавершення через ${minutes} хв.`);
+      await msg.react('🎉');
+      const key = `${gid}-${msg.id}`;
+      const timer = setTimeout(async () => {
+        const fresh = await interaction.channel.messages.fetch(msg.id).catch(() => null);
+        const users = fresh ? (await fresh.reactions.cache.get('🎉')?.users.fetch()).filter((u) => !u.bot) : new Map();
+        const arr = users ? [...users.values()] : [];
+        const picks = arr.sort(() => Math.random() - 0.5).slice(0, winnersCount);
+        await interaction.channel.send(
+          picks.length ? `🏆 Переможці (${prize}): ${picks.map((u) => `<@${u.id}>`).join(', ')}` : 'Немає учасників для розіграшу.'
+        );
+        runtime.giveaways.delete(key);
+      }, minutes * 60 * 1000);
+      runtime.giveaways.set(key, { timer, prize, winnersCount, messageId: msg.id, channelId: interaction.channel.id });
+      return interaction.reply({ content: 'Розіграш створено.', ephemeral: true });
+    }
+    const messageId = interaction.options.getString('messageid', true);
+    const msg = await interaction.channel.messages.fetch(messageId).catch(() => null);
+    if (!msg) return interaction.reply({ content: 'Повідомлення не знайдено.', ephemeral: true });
+    const users = (await msg.reactions.cache.get('🎉')?.users.fetch())?.filter((u) => !u.bot);
+    const arr = users ? [...users.values()] : [];
+    const pick = arr.sort(() => Math.random() - 0.5)[0];
+    return interaction.reply(pick ? `🎉 Новий переможець: <@${pick.id}>` : 'Немає учасників.');
+  }
+  if (interaction.commandName === 'backup_create') {
+    const name = interaction.options.getString('name', true);
+    const cfg = getGuildConfig(gid);
+    const payload = {
+      createdAt: new Date().toISOString(),
+      guildId: gid,
+      guildName: guild.name,
+      config: cfg,
+      roles: guild.roles.cache.map((r) => ({ id: r.id, name: r.name, color: r.color })),
+      channels: guild.channels.cache.map((c) => ({ id: c.id, name: c.name, type: c.type }))
+    };
+    setJson(`backup-${gid}-${name}`, payload);
+    return interaction.reply(`Бекап **${name}** створено.`);
+  }
+  if (interaction.commandName === 'backup_load') {
+    const name = interaction.options.getString('name', true);
+    const backup = getJson(`backup-${gid}-${name}`, null);
+    if (!backup) return interaction.reply({ content: 'Бекап не знайдено.', ephemeral: true });
+    setGuildConfig(gid, backup.config || {});
+    return interaction.reply(`Бекап **${name}** застосовано (конфіг).`);
+  }
+  if (interaction.commandName === 'trigger') {
+    const sub = interaction.options.getSubcommand();
+    const triggers = getTriggers(gid);
+    if (sub === 'add') {
+      const key = interaction.options.getString('key', true);
+      triggers[key] = interaction.options.getString('response', true);
+      setTriggers(gid, triggers);
+      return interaction.reply(`Тригер **${key}** додано.`);
+    }
+    if (sub === 'remove') {
+      const key = interaction.options.getString('key', true);
+      delete triggers[key];
+      setTriggers(gid, triggers);
+      return interaction.reply(`Тригер **${key}** видалено.`);
+    }
+    const keys = Object.keys(triggers);
+    return interaction.reply(keys.length ? keys.join(', ') : 'Тригерів немає.');
+  }
+  if (interaction.commandName === 'autoresponse') {
+    const key = interaction.options.getString('key', true);
+    const resp = getTriggers(gid)[key];
+    return interaction.reply(resp || 'Автовідповідь не знайдено.');
+  }
+  if (interaction.commandName === 'economy_balance') {
+    const eco = getEconomy(gid);
+    const me = eco[interaction.user.id] || { balance: 0, lastDaily: 0 };
+    return interaction.reply(`💰 Ваш баланс: ${me.balance}`);
+  }
+  if (interaction.commandName === 'economy_daily') {
+    const eco = getEconomy(gid);
+    const now = Date.now();
+    const me = eco[interaction.user.id] || { balance: 0, lastDaily: 0 };
+    if (now - me.lastDaily < 24 * 60 * 60 * 1000) return interaction.reply({ content: 'Щоденну вже отримано.', ephemeral: true });
+    me.balance += 100;
+    me.lastDaily = now;
+    eco[interaction.user.id] = me;
+    setEconomy(gid, eco);
+    return interaction.reply('🎁 Ви отримали 100 монет.');
+  }
+  if (interaction.commandName === 'music_play') {
+    const q = interaction.options.getString('query', true);
+    const queue = getJson(`music-${gid}`, []);
+    queue.push({ query: q, by: interaction.user.id, addedAt: Date.now() });
+    setJson(`music-${gid}`, queue);
+    return interaction.reply(`🎵 Додано у чергу: ${q}`);
+  }
+  if (interaction.commandName === 'music_skip') {
+    const queue = getJson(`music-${gid}`, []);
+    if (!queue.length) return interaction.reply('Черга порожня.');
+    const skipped = queue.shift();
+    setJson(`music-${gid}`, queue);
+    return interaction.reply(`⏭ Пропущено: ${skipped.query}`);
+  }
+  if (interaction.commandName === 'music_stop') {
+    setJson(`music-${gid}`, []);
+    return interaction.reply('⏹ Чергу очищено.');
+  }
+  if (interaction.commandName === 'tempvoice') {
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'create') {
+      const ch = await guild.channels.create({ name: `voice-${interaction.user.username}`, type: ChannelType.GuildVoice });
+      return interaction.reply({ content: `Створено: ${ch.name}`, ephemeral: true });
+    }
+    if (interaction.channel.type !== ChannelType.GuildVoice) return interaction.reply({ content: 'Команда працює в голосовому каналі.', ephemeral: true });
+    await interaction.channel.delete().catch(() => null);
+    return;
+  }
+  if (interaction.commandName === 'suggest') {
+    const text = interaction.options.getString('text', true);
+    const cfg = getGuildConfig(gid);
+    const ch = (cfg.suggestionsChannelId && guild.channels.cache.get(cfg.suggestionsChannelId)) || interaction.channel;
+    const msg = await ch.send(`💡 Пропозиція від <@${interaction.user.id}>:\n${text}`);
+    await msg.react('✅').catch(() => null);
+    await msg.react('❌').catch(() => null);
+    return interaction.reply({ content: 'Пропозицію надіслано.', ephemeral: true });
+  }
+  if (interaction.commandName === 'report') {
+    const target = interaction.options.getUser('target', true);
+    const reason = interaction.options.getString('reason', true);
+    await sendLogMessage(guild, 'Скарга', [
+      { name: 'Від', value: `<@${interaction.user.id}>`, inline: true },
+      { name: 'На', value: `<@${target.id}>`, inline: true },
+      { name: 'Причина', value: reason }
+    ]);
+    return interaction.reply({ content: 'Скаргу передано модерації.', ephemeral: true });
+  }
+  if (interaction.commandName === 'verify') {
+    const member = interaction.options.getMember('target') || interaction.member;
+    const cfg = getGuildConfig(gid);
+    if (!cfg.autoRoleId) return interaction.reply({ content: 'AutoRole не налаштована.', ephemeral: true });
+    await member.roles.add(cfg.autoRoleId).catch(() => null);
+    return interaction.reply(`✅ Верифіковано ${member.user.tag}`);
+  }
+  if (interaction.commandName === 'autorole_list') {
+    const cfg = getGuildConfig(gid);
+    return interaction.reply(cfg.autoRoleId ? `Активна авто-роль: <@&${cfg.autoRoleId}>` : 'Авто-роль не налаштована.');
+  }
+  if (interaction.commandName === 'logstats') {
+    const events = getJson(`events-${gid}`, []);
+    const map = {};
+    for (const e of events) map[e.type] = (map[e.type] || 0) + 1;
+    const rows = Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 20);
+    return interaction.reply(rows.length ? rows.map(([k, v]) => `${k}: ${v}`).join('\n') : 'Логів поки немає.');
+  }
+  if (interaction.commandName === 'safe' || interaction.commandName === 'warehouse') {
+    const section = interaction.commandName;
+    const sub = interaction.options.getSubcommand();
+    const key = `${section}-${gid}`;
+    const existing = getJson(key, []);
+    if (sub === 'add') {
+      existing.push({
+        name: interaction.options.getString('name', true),
+        amount: interaction.options.getInteger('amount', true),
+        by: interaction.user.tag,
+        updatedAt: new Date().toISOString()
+      });
+      setJson(key, existing);
+      return interaction.reply('Додано.');
+    }
+    return interaction.reply(existing.length ? existing.map((x, i) => `${i + 1}. ${x.name}: ${x.amount}`).join('\n') : 'Порожньо.');
+  }
+  if (interaction.commandName === 'archive') {
+    const key = `archive-${gid}`;
+    const data = getJson(key, []);
+    if (interaction.options.getSubcommand() === 'save') {
+      data.push({ text: interaction.options.getString('text', true), by: interaction.user.tag, createdAt: new Date().toISOString() });
+      setJson(key, data);
+      return interaction.reply('Архів збережено.');
+    }
+    return interaction.reply(data.length ? data.slice(-10).map((x, i) => `${i + 1}. ${x.text}`).join('\n') : 'Архів порожній.');
+  }
+  if (interaction.commandName === 'config') {
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'welcome') {
+      const patch = { welcomeEnabled: interaction.options.getBoolean('enabled', true) };
+      const ch = interaction.options.getChannel('channel');
+      const msg = interaction.options.getString('message');
+      if (ch) patch.welcomeChannelId = ch.id;
+      if (msg) patch.welcomeMessage = msg;
+      const cfg = setGuildConfig(gid, patch);
+      return interaction.reply(`Welcome: ${cfg.welcomeEnabled}`);
+    }
+    if (sub === 'logchannel') {
+      const cfg = setGuildConfig(gid, { logChannelId: interaction.options.getChannel('channel', true).id });
+      return interaction.reply(`Log channel: <#${cfg.logChannelId}>`);
+    }
+    if (sub === 'autorole') {
+      const cfg = setGuildConfig(gid, { autoRoleId: interaction.options.getRole('role', true).id });
+      return interaction.reply(`AutoRole: <@&${cfg.autoRoleId}>`);
+    }
+    if (sub === 'suggestions') {
+      const cfg = setGuildConfig(gid, { suggestionsChannelId: interaction.options.getChannel('channel', true).id });
+      return interaction.reply(`Suggestions: <#${cfg.suggestionsChannelId}>`);
+    }
+  }
+  if (interaction.commandName === 'reactionrole') {
+    upsertReactionRole(gid, interaction.options.getString('emoji', true), interaction.options.getRole('role', true).id);
+    return interaction.reply('Reaction role збережено.');
+  }
+  if (interaction.commandName === 'automod') {
+    const sub = interaction.options.getSubcommand();
+    const cfg = getGuildConfig(gid);
+    if (sub === 'links') {
+      setGuildConfig(gid, { automod: { ...cfg.automod, linksBlocked: interaction.options.getBoolean('enabled', true) } });
+      return interaction.reply('Оновлено.');
+    }
+    if (sub === 'word_add') {
+      const word = interaction.options.getString('word', true).toLowerCase();
+      setGuildConfig(gid, { automod: { ...cfg.automod, blockedWords: [...new Set([...cfg.automod.blockedWords, word])] } });
+      return interaction.reply('Слово додано.');
+    }
+    if (sub === 'word_remove') {
+      const word = interaction.options.getString('word', true).toLowerCase();
+      setGuildConfig(gid, { automod: { ...cfg.automod, blockedWords: cfg.automod.blockedWords.filter((x) => x !== word) } });
+      return interaction.reply('Слово видалено.');
+    }
+    return interaction.reply(cfg.automod.blockedWords.join(', ') || 'Список порожній.');
+  }
+  if (interaction.commandName === 'analytics') {
+    const analytics = buildGuildAnalytics(guild, getJson(`events-${gid}`, []));
+    return interaction.reply(`Учасники: ${analytics.members}\nJoins: ${analytics.joins}\nLeaves: ${analytics.leaves}\nWarn: ${analytics.warnings}`);
+  }
+  if (interaction.commandName === 'commands_ua') {
+    return interaction.reply('Усі ключові модулі ProBot/CarlBot реалізовані в цьому боті: модерація, automod, тикети, розіграші, економіка, backup, trigger, tempvoice, verify, логи, аналітика.');
+  }
+
+  return interaction.reply({ content: 'Команда не підтримується.', ephemeral: true });
+}
+
 client.on('interactionCreate', async (interaction) => {
   try {
-    if (!interaction.isChatInputCommand() || !interaction.guild) return;
-
-    const guild = interaction.guild;
-    const guildIdValue = guild.id;
-
-    if (interaction.commandName === 'say') {
-      const text = interaction.options.getString('text', true);
-      await interaction.reply({ content: 'Message sent.', ephemeral: true });
-      await interaction.channel.send(text);
-      return;
-    }
-
-    if (interaction.commandName === 'kick') {
-      if (!interaction.member.permissions.has(PermissionFlagsBits.KickMembers)) {
-        await interaction.reply({ content: 'No permission.', ephemeral: true });
-        return;
-      }
-
-      const target = interaction.options.getMember('target');
-      const reason = interaction.options.getString('reason') || 'No reason specified';
-
-      if (!target) {
-        await interaction.reply({ content: 'Member not found.', ephemeral: true });
-        return;
-      }
-
-      await target.kick(reason);
-      logEvent(guildIdValue, {
-        type: 'kick',
-        userId: target.id,
-        username: target.user.tag,
-        moderatorId: interaction.user.id,
-        reason
-      });
-
-      await sendLogMessage(guild, 'Kick', [
-        { name: 'Target', value: `<@${target.id}>`, inline: true },
-        { name: 'Moderator', value: `<@${interaction.user.id}>`, inline: true },
-        { name: 'Reason', value: reason }
-      ]);
-
-      await interaction.reply(`✅ ${target.user.tag} was kicked. Reason: ${reason}`);
-      return;
-    }
-
-    if (interaction.commandName === 'ban') {
-      const targetUser = interaction.options.getUser('target', true);
-      const reason = interaction.options.getString('reason') || 'No reason specified';
-
-      await guild.members.ban(targetUser.id, { reason });
-      logEvent(guildIdValue, {
-        type: 'ban',
-        userId: targetUser.id,
-        username: targetUser.tag,
-        moderatorId: interaction.user.id,
-        reason
-      });
-
-      await sendLogMessage(guild, 'Ban', [
-        { name: 'Target', value: `<@${targetUser.id}>`, inline: true },
-        { name: 'Moderator', value: `<@${interaction.user.id}>`, inline: true },
-        { name: 'Reason', value: reason }
-      ]);
-
-      await interaction.reply(`⛔ ${targetUser.tag} banned. Reason: ${reason}`);
-      return;
-    }
-
-    if (interaction.commandName === 'warn') {
-      const targetUser = interaction.options.getUser('target', true);
-      const reason = interaction.options.getString('reason', true);
-      const key = `warnings-${guildIdValue}`;
-      const warnings = readJson(key, []);
-
-      warnings.push({
-        userId: targetUser.id,
-        username: targetUser.tag,
-        reason,
-        moderatorId: interaction.user.id,
-        createdAt: new Date().toISOString()
-      });
-      writeJson(key, warnings);
-      logEvent(guildIdValue, {
-        type: 'warn',
-        userId: targetUser.id,
-        username: targetUser.tag,
-        moderatorId: interaction.user.id,
-        reason
-      });
-
-      await interaction.reply(`⚠️ Warning added to ${targetUser.tag}: ${reason}`);
-      return;
-    }
-
-    if (interaction.commandName === 'warnings') {
-      const targetUser = interaction.options.getUser('target', true);
-      const warnings = readJson(`warnings-${guildIdValue}`, []).filter((row) => row.userId === targetUser.id);
-
-      if (!warnings.length) {
-        await interaction.reply(`No warnings for ${targetUser.tag}`);
-        return;
-      }
-
-      const text = warnings
-        .slice(-10)
-        .map((row, idx) => `${idx + 1}. [${row.createdAt}] ${row.reason} (mod: <@${row.moderatorId}>)`)
-        .join('\n');
-      await interaction.reply(`Warnings for ${targetUser.tag}:\n${text}`);
-      return;
-    }
-
-    if (interaction.commandName === 'purge') {
-      const count = interaction.options.getInteger('count', true);
-      const deleted = await interaction.channel.bulkDelete(count, true);
-
-      logEvent(guildIdValue, {
-        type: 'purge',
-        moderatorId: interaction.user.id,
-        count: deleted.size
-      });
-
-      await interaction.reply({ content: `🧹 Purged ${deleted.size} messages.`, ephemeral: true });
-      return;
-    }
-
-    if (interaction.commandName === 'rank') {
-      const rank = getRank(guildIdValue, interaction.user.id);
-      await interaction.reply(
-        `🏅 ${interaction.user.tag}: level **${rank.level}**, xp **${rank.xp}**, rank **${rank.rank ?? '-'} / ${rank.totalRanked}**`
-      );
-      return;
-    }
-
-    if (interaction.commandName === 'leveltop') {
-      const limit = interaction.options.getInteger('limit') || 10;
-      const top = getTop(guildIdValue, limit);
-      if (!top.length) {
-        await interaction.reply('Leaderboard is empty yet.');
-        return;
-      }
-
-      const text = top.map((row) => `${row.rank}. <@${row.userId}> — lvl ${row.level}, xp ${row.xp}`).join('\n');
-      await interaction.reply(`🏆 Level Top:\n${text}`);
-      return;
-    }
-
-    if (interaction.commandName === 'userinfo') {
-      const target = interaction.options.getMember('target') || interaction.member;
-      const embed = new EmbedBuilder()
-        .setTitle(`User info: ${target.user.tag}`)
-        .addFields(
-          { name: 'ID', value: target.id },
-          { name: 'Joined server', value: `<t:${Math.floor(target.joinedTimestamp / 1000)}:F>` },
-          { name: 'Created account', value: `<t:${Math.floor(target.user.createdTimestamp / 1000)}:F>` },
-          { name: 'Roles', value: `${target.roles.cache.size - 1}` }
-        )
-        .setThumbnail(target.user.displayAvatarURL())
-        .setColor(0x5865f2);
-
-      await interaction.reply({ embeds: [embed] });
-      return;
-    }
-
-    if (interaction.commandName === 'safe' || interaction.commandName === 'warehouse') {
-      const section = interaction.commandName;
-      const sub = interaction.options.getSubcommand();
-      const key = `${section}-${guildIdValue}`;
-      const existing = readJson(key, []);
-
-      if (sub === 'add') {
-        const name = interaction.options.getString('name', true);
-        const amount = interaction.options.getInteger('amount', true);
-        existing.push({ name, amount, updatedAt: new Date().toISOString(), by: interaction.user.tag });
-        writeJson(key, existing);
-        await interaction.reply(`Added: **${name}** x${amount} to ${section}.`);
-        return;
-      }
-
-      if (!existing.length) {
-        await interaction.reply(`${section} is empty.`);
-        return;
-      }
-
-      const text = existing
-        .slice(-15)
-        .map((item, i) => `${i + 1}. ${item.name} — ${item.amount} (by ${item.by})`)
-        .join('\n');
-
-      await interaction.reply(`**${section.toUpperCase()}**\n${text}`);
-      return;
-    }
-
-    if (interaction.commandName === 'archive') {
-      const sub = interaction.options.getSubcommand();
-      const key = `archive-${guildIdValue}`;
-      const entries = readJson(key, []);
-
-      if (sub === 'save') {
-        const text = interaction.options.getString('text', true);
-        entries.push({ text, by: interaction.user.tag, createdAt: new Date().toISOString() });
-        writeJson(key, entries);
-        await interaction.reply('Archive entry saved.');
-        return;
-      }
-
-      if (!entries.length) {
-        await interaction.reply('Archive is empty.');
-        return;
-      }
-
-      const list = entries
-        .slice(-10)
-        .map((entry, i) => `${i + 1}. [${entry.createdAt}] ${entry.by}: ${entry.text}`)
-        .join('\n');
-
-      await interaction.reply(`**Archive (latest 10)**\n${list}`);
-      return;
-    }
-
-    if (interaction.commandName === 'config') {
-      const sub = interaction.options.getSubcommand();
-
-      if (sub === 'welcome') {
-        const enabled = interaction.options.getBoolean('enabled', true);
-        const channel = interaction.options.getChannel('channel');
-        const message = interaction.options.getString('message');
-
-        const patch = { welcomeEnabled: enabled };
-        if (channel) patch.welcomeChannelId = channel.id;
-        if (message) patch.welcomeMessage = message;
-
-        const cfg = setGuildConfig(guildIdValue, patch);
-        await interaction.reply(
-          `Welcome config saved: enabled=${cfg.welcomeEnabled}, channel=${cfg.welcomeChannelId ?? 'none'}`
-        );
-        return;
-      }
-
-      if (sub === 'logchannel') {
-        const channel = interaction.options.getChannel('channel', true);
-        const cfg = setGuildConfig(guildIdValue, { logChannelId: channel.id });
-        await interaction.reply(`Log channel set to <#${cfg.logChannelId}>`);
-        return;
-      }
-
-      if (sub === 'autorole') {
-        const role = interaction.options.getRole('role', true);
-        const cfg = setGuildConfig(guildIdValue, { autoRoleId: role.id });
-        await interaction.reply(`Autorole set to <@&${cfg.autoRoleId}>`);
-        return;
-      }
-
-      if (sub === 'suggestions') {
-        const channel = interaction.options.getChannel('channel', true);
-        const cfg = setGuildConfig(guildIdValue, { suggestionsChannelId: channel.id });
-        await interaction.reply(`Suggestions channel set to <#${cfg.suggestionsChannelId}>`);
-        return;
-      }
-    }
-
-    if (interaction.commandName === 'reactionrole') {
-      const emoji = interaction.options.getString('emoji', true);
-      const role = interaction.options.getRole('role', true);
-      upsertReactionRole(guildIdValue, emoji, role.id);
-      await interaction.reply(`Reaction-role configured: ${emoji} => ${role}`);
-      return;
-    }
-
-    if (interaction.commandName === 'automod') {
-      const sub = interaction.options.getSubcommand();
-      const cfg = getGuildConfig(guildIdValue);
-
-      if (sub === 'links') {
-        const enabled = interaction.options.getBoolean('enabled', true);
-        setGuildConfig(guildIdValue, { automod: { ...cfg.automod, linksBlocked: enabled } });
-        await interaction.reply(`AutoMod links blocking: ${enabled ? 'enabled' : 'disabled'}`);
-        return;
-      }
-
-      if (sub === 'word_add') {
-        const word = interaction.options.getString('word', true).trim().toLowerCase();
-        const words = [...new Set([...cfg.automod.blockedWords, word])];
-        setGuildConfig(guildIdValue, { automod: { ...cfg.automod, blockedWords: words } });
-        await interaction.reply(`Blocked word added: ${word}`);
-        return;
-      }
-
-      if (sub === 'word_remove') {
-        const word = interaction.options.getString('word', true).trim().toLowerCase();
-        const words = cfg.automod.blockedWords.filter((item) => item !== word);
-        setGuildConfig(guildIdValue, { automod: { ...cfg.automod, blockedWords: words } });
-        await interaction.reply(`Blocked word removed: ${word}`);
-        return;
-      }
-
-      if (sub === 'word_list') {
-        await interaction.reply(
-          cfg.automod.blockedWords.length
-            ? `Blocked words:\n${cfg.automod.blockedWords.map((w, i) => `${i + 1}. ${w}`).join('\n')}`
-            : 'Blocked words list is empty.'
-        );
-      }
-      return;
-    }
-
-    if (interaction.commandName === 'commands_ua') {
-      await interaction.reply(
-        '🇺🇦 Доступні модулі: модерація, automod, рівні, reaction roles, welcome/autorole, архів, сейф/склад, веб-панель.\n' +
-          'Сумісні команди ProBot/CarlBot також додані (частина як каркас). Для команд-каркасів бот відповість статусом впровадження.'
-      );
-      return;
-    }
-
-    if (!implementedCommands.has(interaction.commandName)) {
-      await interaction.reply({
-        content:
-          `Команда /${interaction.commandName} додана для сумісності з ProBot/CarlBot, але повна бізнес-логіка ще в процесі впровадження.`,
-        ephemeral: true
-      });
-      return;
-    }
-
-    if (interaction.commandName === 'analytics') {
-      const events = readJson(`events-${guildIdValue}`, []);
-      const analytics = buildGuildAnalytics(guild, events);
-
-      const embed = new EmbedBuilder()
-        .setTitle('Server analytics (24h)')
-        .addFields(
-          { name: 'Members', value: String(analytics.members), inline: true },
-          { name: 'Channels', value: String(analytics.channels), inline: true },
-          { name: 'Roles', value: String(analytics.roles), inline: true },
-          { name: 'Joins', value: String(analytics.joins), inline: true },
-          { name: 'Leaves', value: String(analytics.leaves), inline: true },
-          { name: 'Deleted messages', value: String(analytics.messageDeletes), inline: true },
-          { name: 'Warnings', value: String(analytics.warnings), inline: true },
-          { name: 'Kicks', value: String(analytics.kicks), inline: true },
-          { name: 'Bans', value: String(analytics.bans), inline: true },
-          { name: 'Purges', value: String(analytics.purges), inline: true },
-          { name: 'AutoMod(link)', value: String(analytics.automodLinkDeletes), inline: true },
-          { name: 'AutoMod(word)', value: String(analytics.automodWordDeletes), inline: true }
-        )
-        .setFooter({ text: `Updated: ${analytics.generatedAt}` })
-        .setColor(0x2b2d31);
-
-      await interaction.reply({ embeds: [embed] });
-    }
+    await handleInteraction(interaction);
   } catch (error) {
     console.error('[interaction-error]', error);
     if (interaction.replied || interaction.deferred) {
@@ -583,12 +584,11 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 client.on('guildBanAdd', async (ban) => {
-  const executor = await ban.guild.fetchAuditLogs({ type: AuditLogEvent.MemberBanAdd, limit: 1 });
-  const entry = executor.entries.first();
+  const logs = await ban.guild.fetchAuditLogs({ type: AuditLogEvent.MemberBanAdd, limit: 1 });
+  const entry = logs.entries.first();
   logEvent(ban.guild.id, {
     type: 'ban',
     userId: ban.user.id,
-    username: ban.user.tag,
     moderatorId: entry?.executor?.id ?? 'unknown',
     reason: entry?.reason || 'No reason'
   });
