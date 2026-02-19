@@ -236,6 +236,18 @@ const commandDefinitions = [
     .setName('activity_channel')
     .setDescription('Детальна активність каналу')
     .addChannelOption((option) => option.setName('channel').setDescription('Канал').setRequired(false)),
+  new SlashCommandBuilder()
+    .setName('quest_count')
+    .setDescription('Порахувати, скільки разів користувача згадали у квест-каналі')
+    .addUserOption((option) => option.setName('target').setDescription('Користувач').setRequired(false)),
+  new SlashCommandBuilder()
+    .setName('event_count')
+    .setDescription('Порахувати, скільки разів користувача згадали у каналі івентів')
+    .addUserOption((option) => option.setName('target').setDescription('Користувач').setRequired(false)),
+    new SlashCommandBuilder()
+    .setName('sync_commands')
+    .setDescription('Примусово синхронізувати slash-команди')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('commands_ua').setDescription('Довідка по командах (UA)')
 ];
 

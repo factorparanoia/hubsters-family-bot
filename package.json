@@ -1,8 +1,22 @@
-DISCORD_TOKEN=your_bot_token
-DISCORD_CLIENT_ID=your_application_id
-DISCORD_GUILD_ID=your_test_guild_id
-AUTO_SYNC_COMMANDS=true
-WEB_PORT=3000
-DASHBOARD_TOKEN=change_me_secure_token
-QUEST_CHANNEL_ID=your_quest_channel_id
-EVENT_CHANNEL_ID=your_event_channel_id
+{
+  "name": "discord-railway-management-bot",
+  "version": "0.3.0",
+  "description": "Modular Discord server management bot + web dashboard for Railway",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "register": "node src/register-commands.js",
+    "check": "node --check src/index.js && node --check src/register-commands.js && node --check src/command-definitions.js && node --check src/web/panel.js && node --check src/lib/config.js && node --check src/lib/levels.js && node --check src/lib/music.js && node --check src/lib/activity.js && node --check src/lib/tickets.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@discordjs/voice": "^0.17.0",
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "play-dl": "^1.9.7"
+  }
+}
