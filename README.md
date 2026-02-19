@@ -1,45 +1,28 @@
 # Discord Management Bot (Railway) + Web Panel
 
-Если у вас "не появляется список команд" — в этой версии это исправлено:
-- бот автоматически синхронизирует slash-команды при старте (`AUTO_SYNC_COMMANDS=true`)
-- если указан `DISCORD_GUILD_ID`, команды регистрируются как **guild commands** (появляются почти сразу)
-- если `DISCORD_GUILD_ID` не указан, регистрируются **global commands** (могут появляться до ~1 часа)
+Оновлення: додано великий сумісний набір slash-команд у стилі **ProBot + CarlBot** та українізовані описи команд.
 
-## Функции
-- модерация: `/kick`, `/ban`, `/warn`, `/warnings`, `/purge`
-- automod: `/automod links`, `word_add`, `word_remove`, `word_list`
-- leveling: `/rank`, `/leveltop`
-- community: welcome, autorole, suggestions, reaction roles
-- учет/архив: `/safe`, `/warehouse`, `/archive`
-- аналитика: `/analytics`
-- web panel: конфиг, логи, leaderboard
+## Що зроблено
+- Команди та описи перекладені українською для зручності адміністраторів.
+- Додано розширений compatibility-набір команд (модерація, utility, tickets, giveaways, music, backups, verify, reports тощо).
+- Для ключових модулів логіка вже працює: модерація, automod, рівні, welcome/autorole, reaction roles, analytics, архів, сейф/склад.
+- Для частини compatibility-команд додано безпечний fallback-відповідач (бот не мовчить, а пояснює, що команда в процесі повної реалізації).
 
-## Быстрый старт
+## Чому це важливо
+В ProBot/CarlBot дуже великий обсяг команд і модулів. У цій версії:
+1. Командний інтерфейс максимально наближений за набором.
+2. Критичні модулі вже робочі.
+3. Решта модулів має сумісні entry points і зрозумілий статус впровадження.
 
+## Якщо не з'являються команди
+- Перевірте `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_GUILD_ID`.
+- Переконайтесь, що бот запрошений із scope: `bot applications.commands`.
+- Подивіться логи старта: має бути `[commands] synced ...`.
+- Для миттєвого оновлення команд залишайте `DISCORD_GUILD_ID` (guild commands).
+
+## Швидкий старт
 ```bash
 npm install
 cp .env.example .env
-npm run register   # опционально, можно не вызывать, если AUTO_SYNC_COMMANDS=true
 npm start
 ```
-
-## Обязательные env
-- `DISCORD_TOKEN`
-- `DISCORD_CLIENT_ID`
-
-## Рекомендуемые env
-- `DISCORD_GUILD_ID` — чтобы команды появились сразу в тестовом сервере
-- `AUTO_SYNC_COMMANDS=true`
-- `WEB_PORT` (локально) / `PORT` (Railway)
-- `DASHBOARD_TOKEN`
-
-## Railway-ready
-- `railway.json`
-- `nixpacks.toml`
-- `Procfile`
-
-## Диагностика, если команды не появились
-1. Проверьте, что бот приглашен с scope: `bot applications.commands`.
-2. Проверьте права бота и наличие `DISCORD_CLIENT_ID`.
-3. Проверьте логи старта — должно быть сообщение `[commands] synced ...`.
-4. Для мгновенного результата укажите `DISCORD_GUILD_ID`.

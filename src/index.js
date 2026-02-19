@@ -81,6 +81,10 @@ function hasLink(content) {
   return /(https?:\/\/|www\.)\S+/i.test(content);
 }
 
+const implementedCommands = new Set([
+  'say','kick','ban','warn','warnings','purge','rank','leveltop','userinfo','safe','warehouse','archive','config','reactionrole','automod','analytics','commands_ua'
+]);
+
 client.once('clientReady', async () => {
   console.log(`Bot started as ${client.user.tag}`);
   await registerCommandsOnStartup().catch((error) => {
@@ -526,6 +530,23 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
+    if (interaction.commandName === 'commands_ua') {
+      await interaction.reply(
+        '🇺🇦 Доступні модулі: модерація, automod, рівні, reaction roles, welcome/autorole, архів, сейф/склад, веб-панель.\n' +
+          'Сумісні команди ProBot/CarlBot також додані (частина як каркас). Для команд-каркасів бот відповість статусом впровадження.'
+      );
+      return;
+    }
+
+    if (!implementedCommands.has(interaction.commandName)) {
+      await interaction.reply({
+        content:
+          `Команда /${interaction.commandName} додана для сумісності з ProBot/CarlBot, але повна бізнес-логіка ще в процесі впровадження.`,
+        ephemeral: true
+      });
+      return;
+    }
+
     if (interaction.commandName === 'analytics') {
       const events = readJson(`events-${guildIdValue}`, []);
       const analytics = buildGuildAnalytics(guild, events);
@@ -554,9 +575,9 @@ client.on('interactionCreate', async (interaction) => {
   } catch (error) {
     console.error('[interaction-error]', error);
     if (interaction.replied || interaction.deferred) {
-      await interaction.followUp({ content: 'Command failed. Check bot logs.', ephemeral: true }).catch(() => null);
+      await interaction.followUp({ content: 'Помилка виконання команди. Перевірте логи бота.', ephemeral: true }).catch(() => null);
     } else {
-      await interaction.reply({ content: 'Command failed. Check bot logs.', ephemeral: true }).catch(() => null);
+      await interaction.reply({ content: 'Помилка виконання команди. Перевірте логи бота.', ephemeral: true }).catch(() => null);
     }
   }
 });

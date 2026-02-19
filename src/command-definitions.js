@@ -1,205 +1,195 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 
-const commandDefinitions = [
+const coreCommands = [
   new SlashCommandBuilder()
     .setName('say')
-    .setDescription('Send a message to the current channel via bot')
-    .addStringOption((option) =>
-      option.setName('text').setDescription('Message text').setRequired(true)
-    )
+    .setDescription('Надіслати повідомлення від імені бота')
+    .addStringOption((option) => option.setName('text').setDescription('Текст повідомлення').setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
 
   new SlashCommandBuilder()
     .setName('kick')
-    .setDescription('Kick a member from the server')
-    .addUserOption((option) =>
-      option.setName('target').setDescription('User to kick').setRequired(true)
-    )
-    .addStringOption((option) =>
-      option.setName('reason').setDescription('Reason').setRequired(false)
-    )
+    .setDescription('Вигнати учасника із сервера')
+    .addUserOption((option) => option.setName('target').setDescription('Користувач').setRequired(true))
+    .addStringOption((option) => option.setName('reason').setDescription('Причина').setRequired(false))
     .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers),
 
   new SlashCommandBuilder()
     .setName('ban')
-    .setDescription('Ban a member from the server')
-    .addUserOption((option) =>
-      option.setName('target').setDescription('User to ban').setRequired(true)
-    )
-    .addStringOption((option) =>
-      option.setName('reason').setDescription('Reason').setRequired(false)
-    )
+    .setDescription('Забанити учасника')
+    .addUserOption((option) => option.setName('target').setDescription('Користувач').setRequired(true))
+    .addStringOption((option) => option.setName('reason').setDescription('Причина').setRequired(false))
     .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
 
   new SlashCommandBuilder()
     .setName('warn')
-    .setDescription('Add warning to user')
-    .addUserOption((option) =>
-      option.setName('target').setDescription('User to warn').setRequired(true)
-    )
-    .addStringOption((option) =>
-      option.setName('reason').setDescription('Warning reason').setRequired(true)
-    )
+    .setDescription('Видати попередження')
+    .addUserOption((option) => option.setName('target').setDescription('Користувач').setRequired(true))
+    .addStringOption((option) => option.setName('reason').setDescription('Причина').setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
 
   new SlashCommandBuilder()
     .setName('warnings')
-    .setDescription('List user warnings')
-    .addUserOption((option) =>
-      option.setName('target').setDescription('User').setRequired(true)
-    )
+    .setDescription('Список попереджень користувача')
+    .addUserOption((option) => option.setName('target').setDescription('Користувач').setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
 
   new SlashCommandBuilder()
     .setName('purge')
-    .setDescription('Delete latest N messages in current channel')
+    .setDescription('Видалити останні повідомлення')
     .addIntegerOption((option) =>
-      option.setName('count').setDescription('2-100').setRequired(true).setMinValue(2).setMaxValue(100)
+      option.setName('count').setDescription('Кількість 2-100').setRequired(true).setMinValue(2).setMaxValue(100)
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
 
-  new SlashCommandBuilder().setName('rank').setDescription('Show your level/rank'),
+  new SlashCommandBuilder().setName('rank').setDescription('Показати ваш рівень та рейтинг'),
 
   new SlashCommandBuilder()
     .setName('leveltop')
-    .setDescription('Show top level leaderboard')
+    .setDescription('Топ користувачів за рівнем')
     .addIntegerOption((option) =>
-      option.setName('limit').setDescription('Top size 3-20').setRequired(false).setMinValue(3).setMaxValue(20)
+      option.setName('limit').setDescription('Кількість 3-20').setRequired(false).setMinValue(3).setMaxValue(20)
     ),
 
   new SlashCommandBuilder()
     .setName('userinfo')
-    .setDescription('Show user profile summary')
-    .addUserOption((option) =>
-      option.setName('target').setDescription('User').setRequired(false)
-    ),
+    .setDescription('Інформація про користувача')
+    .addUserOption((option) => option.setName('target').setDescription('Користувач').setRequired(false)),
 
   new SlashCommandBuilder()
     .setName('safe')
-    .setDescription('Manage server safe records')
+    .setDescription('Облік сейфа')
     .addSubcommand((sub) =>
       sub
         .setName('add')
-        .setDescription('Add safe item')
-        .addStringOption((option) =>
-          option.setName('name').setDescription('Item name').setRequired(true)
-        )
-        .addIntegerOption((option) =>
-          option.setName('amount').setDescription('Item amount').setRequired(true)
-        )
+        .setDescription('Додати позицію')
+        .addStringOption((option) => option.setName('name').setDescription('Назва').setRequired(true))
+        .addIntegerOption((option) => option.setName('amount').setDescription('Кількість').setRequired(true))
     )
-    .addSubcommand((sub) => sub.setName('list').setDescription('List safe items')),
+    .addSubcommand((sub) => sub.setName('list').setDescription('Показати список')),
 
   new SlashCommandBuilder()
     .setName('warehouse')
-    .setDescription('Manage warehouse records')
+    .setDescription('Облік складу')
     .addSubcommand((sub) =>
       sub
         .setName('add')
-        .setDescription('Add warehouse item')
-        .addStringOption((option) =>
-          option.setName('name').setDescription('Item name').setRequired(true)
-        )
-        .addIntegerOption((option) =>
-          option.setName('amount').setDescription('Item amount').setRequired(true)
-        )
+        .setDescription('Додати позицію')
+        .addStringOption((option) => option.setName('name').setDescription('Назва').setRequired(true))
+        .addIntegerOption((option) => option.setName('amount').setDescription('Кількість').setRequired(true))
     )
-    .addSubcommand((sub) => sub.setName('list').setDescription('List warehouse items')),
+    .addSubcommand((sub) => sub.setName('list').setDescription('Показати список')),
 
   new SlashCommandBuilder()
     .setName('archive')
-    .setDescription('Archive notes and decisions')
+    .setDescription('Архів записів')
     .addSubcommand((sub) =>
       sub
         .setName('save')
-        .setDescription('Save text entry to archive')
-        .addStringOption((option) =>
-          option.setName('text').setDescription('Archive text').setRequired(true)
-        )
+        .setDescription('Зберегти запис')
+        .addStringOption((option) => option.setName('text').setDescription('Текст').setRequired(true))
     )
-    .addSubcommand((sub) => sub.setName('list').setDescription('Show latest archive entries')),
+    .addSubcommand((sub) => sub.setName('list').setDescription('Останні записи')),
 
   new SlashCommandBuilder()
     .setName('config')
-    .setDescription('Configure bot features for this guild')
+    .setDescription('Налаштування бота')
     .addSubcommand((sub) =>
       sub
         .setName('welcome')
-        .setDescription('Set welcome channel and message')
-        .addBooleanOption((option) =>
-          option.setName('enabled').setDescription('Enable welcome messages').setRequired(true)
-        )
-        .addChannelOption((option) =>
-          option.setName('channel').setDescription('Welcome channel').setRequired(false)
-        )
-        .addStringOption((option) =>
-          option.setName('message').setDescription('Use {user} and {server} placeholders').setRequired(false)
-        )
+        .setDescription('Налаштувати привітання')
+        .addBooleanOption((option) => option.setName('enabled').setDescription('Увімкнути').setRequired(true))
+        .addChannelOption((option) => option.setName('channel').setDescription('Канал').setRequired(false))
+        .addStringOption((option) => option.setName('message').setDescription('Шаблон').setRequired(false))
     )
     .addSubcommand((sub) =>
       sub
         .setName('logchannel')
-        .setDescription('Set moderation/event log channel')
-        .addChannelOption((option) =>
-          option.setName('channel').setDescription('Log channel').setRequired(true)
-        )
+        .setDescription('Канал логів')
+        .addChannelOption((option) => option.setName('channel').setDescription('Канал').setRequired(true))
     )
     .addSubcommand((sub) =>
       sub
         .setName('autorole')
-        .setDescription('Set auto-role for new members')
-        .addRoleOption((option) =>
-          option.setName('role').setDescription('Role to auto assign').setRequired(true)
-        )
+        .setDescription('Авто-роль для новачків')
+        .addRoleOption((option) => option.setName('role').setDescription('Роль').setRequired(true))
     )
     .addSubcommand((sub) =>
       sub
         .setName('suggestions')
-        .setDescription('Set suggestions channel')
-        .addChannelOption((option) =>
-          option.setName('channel').setDescription('Suggestions channel').setRequired(true)
-        )
+        .setDescription('Канал пропозицій')
+        .addChannelOption((option) => option.setName('channel').setDescription('Канал').setRequired(true))
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   new SlashCommandBuilder()
     .setName('reactionrole')
-    .setDescription('Bind emoji to role for reaction-role workflow')
-    .addStringOption((option) =>
-      option.setName('emoji').setDescription('Emoji, e.g. ✅').setRequired(true)
-    )
-    .addRoleOption((option) =>
-      option.setName('role').setDescription('Role to assign').setRequired(true)
-    )
+    .setDescription('Привʼязати емодзі до ролі')
+    .addStringOption((option) => option.setName('emoji').setDescription('Емодзі').setRequired(true))
+    .addRoleOption((option) => option.setName('role').setDescription('Роль').setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
   new SlashCommandBuilder()
     .setName('automod')
-    .setDescription('Auto moderation settings')
+    .setDescription('Авто-модерація')
     .addSubcommand((sub) =>
       sub
         .setName('links')
-        .setDescription('Enable/disable link blocking')
-        .addBooleanOption((option) => option.setName('enabled').setDescription('true/false').setRequired(true))
+        .setDescription('Блокування посилань')
+        .addBooleanOption((option) => option.setName('enabled').setDescription('Увімкнути').setRequired(true))
     )
     .addSubcommand((sub) =>
       sub
         .setName('word_add')
-        .setDescription('Add blocked word')
-        .addStringOption((option) => option.setName('word').setDescription('Word').setRequired(true))
+        .setDescription('Додати заборонене слово')
+        .addStringOption((option) => option.setName('word').setDescription('Слово').setRequired(true))
     )
     .addSubcommand((sub) =>
       sub
         .setName('word_remove')
-        .setDescription('Remove blocked word')
-        .addStringOption((option) => option.setName('word').setDescription('Word').setRequired(true))
+        .setDescription('Видалити заборонене слово')
+        .addStringOption((option) => option.setName('word').setDescription('Слово').setRequired(true))
     )
-    .addSubcommand((sub) => sub.setName('word_list').setDescription('List blocked words'))
+    .addSubcommand((sub) => sub.setName('word_list').setDescription('Список заборонених слів'))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
 
-  new SlashCommandBuilder()
-    .setName('analytics')
-    .setDescription('Server analytics overview')
+  new SlashCommandBuilder().setName('analytics').setDescription('Аналітика сервера за 24 години'),
+  new SlashCommandBuilder().setName('commands_ua').setDescription('Довідка по командах (UA)')
 ];
+
+const extraCompatibilityCommands = [
+  ['serverinfo', 'Інформація про сервер'],
+  ['avatar', 'Аватар користувача'],
+  ['roleinfo', 'Інформація про роль'],
+  ['channelinfo', 'Інформація про канал'],
+  ['lock', 'Закрити канал для написання'],
+  ['unlock', 'Відкрити канал для написання'],
+  ['slowmode', 'Увімкнути або змінити slowmode'],
+  ['mute', 'Видати таймаут користувачу'],
+  ['unmute', 'Зняти таймаут користувачу'],
+  ['unban', 'Розбанити користувача за ID'],
+  ['clearwarns', 'Очистити попередження користувача'],
+  ['poll', 'Створити опитування'],
+  ['reminder', 'Нагадування'],
+  ['ticket', 'Система тікетів'],
+  ['giveaway', 'Керування розіграшами'],
+  ['backup_create', 'Створити бекап сервера'],
+  ['backup_load', 'Відновити бекап сервера'],
+  ['trigger', 'Тригер-команди'],
+  ['autoresponse', 'Автовідповіді'],
+  ['economy_balance', 'Баланс економіки'],
+  ['economy_daily', 'Щоденна нагорода'],
+  ['music_play', 'Відтворити музику'],
+  ['music_stop', 'Зупинити музику'],
+  ['music_skip', 'Пропустити трек'],
+  ['tempvoice', 'Тимчасові голосові кімнати'],
+  ['suggest', 'Створити пропозицію'],
+  ['report', 'Надіслати скаргу модерації'],
+  ['verify', 'Верифікація користувача'],
+  ['autorole_list', 'Список авто-ролей'],
+  ['logstats', 'Статистика логів']
+].map(([name, description]) => new SlashCommandBuilder().setName(name).setDescription(description));
+
+const commandDefinitions = [...coreCommands, ...extraCompatibilityCommands];
 
 module.exports = { commandDefinitions };
