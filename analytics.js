@@ -90,17 +90,54 @@ async function countUserMentionsInChannel(channel, userId) {
 }
 
 
-async function registerCommandsOnStartup() {
-  if (process.env.AUTO_SYNC_COMMANDS === 'false') return;
-  if (!clientId) return;
+
+async function countAllMentionsInChannel(channel) {
+  let before;
+  const counters = new Map();
+
+  while (true) {
+    const batch = await channel.messages.fetch({ limit: 100, before }).catch(() => null);
+    if (!batch || batch.size === 0) break;
+
+    for (const message of batch.values()) {
+      const users = message.mentions?.users;
+      if (!users || users.size === 0) continue;
+
+      for (const user of users.values()) {
+        counters.set(user.id, (counters.get(user.id) || 0) + 1);
+      }
+    }
+
+    before = batch.last().id;
+    if (batch.size < 100) break;
+  }
+
+  return counters;
+}
+
+async function syncSlashCommands(forceGuild = false) {
+  if (!clientId) throw new Error('DISCORD_CLIENT_ID не задано');
+
   const rest = new REST({ version: '10' }).setToken(token);
   const body = commandDefinitions.map((c) => c.toJSON());
-  if (guildId) {
+
+  if (guildId || forceGuild) {
+    if (!guildId) throw new Error('DISCORD_GUILD_ID не задано для guild sync');
     await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body });
-    console.log(`[commands] synced ${body.length} guild commands to ${guildId}`);
+    return { scope: 'guild', count: body.length, guildId };
+  }
+
+  await rest.put(Routes.applicationCommands(clientId), { body });
+  return { scope: 'global', count: body.length };
+}
+
+async function registerCommandsOnStartup() {
+  if (process.env.AUTO_SYNC_COMMANDS === 'false') return;
+  const result = await syncSlashCommands(false);
+  if (result.scope === 'guild') {
+    console.log(`[commands] synced ${result.count} guild commands to ${result.guildId}`);
   } else {
-    await rest.put(Routes.applicationCommands(clientId), { body });
-    console.log(`[commands] synced ${body.length} global commands`);
+    console.log(`[commands] synced ${result.count} global commands`);
   }
 }
 
@@ -738,6 +775,48 @@ async function handleInteraction(interaction) {
   }
 
 
+
+  if (interaction.commandName === 'quest_stats') {
+    const questChannelId = process.env.QUEST_CHANNEL_ID;
+
+    if (!questChannelId) {
+      return interaction.reply({ content: 'Не задано QUEST_CHANNEL_ID у змінних середовища.', ephemeral: true });
+    }
+
+    const questChannel = guild.channels.cache.get(questChannelId);
+    if (!questChannel || !questChannel.isTextBased()) {
+      return interaction.reply({ content: 'Квест-канал не знайдено або він не текстовий.', ephemeral: true });
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const counters = await countAllMentionsInChannel(questChannel);
+    if (counters.size === 0) {
+      return interaction.editReply('У квест-каналі не знайдено згадок користувачів.');
+    }
+
+    const sorted = [...counters.entries()].sort((a, b) => b[1] - a[1]);
+    const rows = sorted.map(([userId, count]) => `<@${userId}> — ${count}`).join('\n');
+
+    const chunks = [];
+    let current = '';
+    for (const line of rows.split('\n')) {
+      if ((current + line + '\n').length > 1800) {
+        chunks.push(current);
+        current = '';
+      }
+      current += `${line}\n`;
+    }
+    if (current) chunks.push(current);
+
+    await interaction.editReply(`Квести (згадки) у каналі <#${questChannelId}>:
+${chunks[0]}`);
+    for (let i = 1; i < chunks.length; i++) {
+      await interaction.followUp({ content: chunks[i], ephemeral: true });
+    }
+    return;
+  }
+
   if (interaction.commandName === 'event_count') {
     const target = interaction.options.getUser('target') || interaction.user;
     const eventChannelId = process.env.EVENT_CHANNEL_ID;
@@ -774,6 +853,15 @@ async function handleInteraction(interaction) {
     const analytics = buildGuildAnalytics(guild, getJson(`events-${gid}`, []));
     return interaction.reply(`Учасники: ${analytics.members}\nJoins: ${analytics.joins}\nLeaves: ${analytics.leaves}\nWarn: ${analytics.warnings}`);
   }
+
+  if (interaction.commandName === 'sync_commands') {
+    const result = await syncSlashCommands(true);
+    return interaction.reply({
+      content: `✅ Синхронізовано ${result.count} команд у guild scope (${result.guildId}).`,
+      ephemeral: true
+    });
+  }
+
   if (interaction.commandName === 'commands_ua') {
     return interaction.reply('Усі ключові модулі реалізовані: модерація, automod, тікети, розіграші, економіка, backup, trigger, tempvoice, verify, логи, аналітика, квести та івенти.');
   }

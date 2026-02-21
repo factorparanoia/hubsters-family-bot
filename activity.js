@@ -244,7 +244,14 @@ const commandDefinitions = [
     .setName('event_count')
     .setDescription('Порахувати, скільки разів користувача згадали у каналі івентів')
     .addUserOption((option) => option.setName('target').setDescription('Користувач').setRequired(false)),
-    new SlashCommandBuilder().setName('commands_ua').setDescription('Довідка по командах (UA)')
+  new SlashCommandBuilder()
+    .setName('quest_stats')
+    .setDescription('Порахувати квести (згадки) для всіх людей у квест-каналі'),
+    new SlashCommandBuilder()
+    .setName('sync_commands')
+    .setDescription('Примусово синхронізувати slash-команди')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('commands_ua').setDescription('Довідка по командах (UA)')
 ];
 
 module.exports = { commandDefinitions };

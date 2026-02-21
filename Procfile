@@ -1,1 +1,3 @@
-web: npm start
+node_modules/
+.env
+data/*.json
