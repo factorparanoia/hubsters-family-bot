@@ -82,8 +82,9 @@ async function countUserMentionsInChannel(channel, userId) {
       }
     }
 
+    scanned += batch.size;
     before = batch.last().id;
-    if (batch.size < 100) break;
+    if (batch.size < need) break;
   }
 
   return total;
@@ -91,12 +92,14 @@ async function countUserMentionsInChannel(channel, userId) {
 
 
 
-async function countAllMentionsInChannel(channel) {
+async function countAllMentionsInChannel(channel, maxMessages = 500) {
   let before;
+  let scanned = 0;
   const counters = new Map();
 
-  while (true) {
-    const batch = await channel.messages.fetch({ limit: 100, before }).catch(() => null);
+  while (scanned < maxMessages) {
+    const need = Math.min(100, maxMessages - scanned);
+    const batch = await channel.messages.fetch({ limit: need, before }).catch(() => null);
     if (!batch || batch.size === 0) break;
 
     for (const message of batch.values()) {
@@ -108,8 +111,9 @@ async function countAllMentionsInChannel(channel) {
       }
     }
 
+    scanned += batch.size;
     before = batch.last().id;
-    if (batch.size < 100) break;
+    if (batch.size < need) break;
   }
 
   return counters;
@@ -790,7 +794,8 @@ async function handleInteraction(interaction) {
 
     await interaction.deferReply({ ephemeral: true });
 
-    const counters = await countAllMentionsInChannel(questChannel);
+    const limit = interaction.options.getInteger('limit') || 500;
+    const counters = await countAllMentionsInChannel(questChannel, limit);
     if (counters.size === 0) {
       return interaction.editReply('У квест-каналі не знайдено згадок користувачів.');
     }
@@ -809,7 +814,7 @@ async function handleInteraction(interaction) {
     }
     if (current) chunks.push(current);
 
-    await interaction.editReply(`Квести (згадки) у каналі <#${questChannelId}>:
+    await interaction.editReply(`Квести (згадки) у каналі <#${questChannelId}> за останні ${limit}+ повідомлень:
 ${chunks[0]}`);
     for (let i = 1; i < chunks.length; i++) {
       await interaction.followUp({ content: chunks[i], ephemeral: true });
@@ -837,6 +842,49 @@ ${chunks[0]}`);
     );
   }
 
+
+  if (interaction.commandName === 'event_stats') {
+    const eventChannelId = process.env.EVENT_CHANNEL_ID;
+
+    if (!eventChannelId) {
+      return interaction.reply({ content: 'Не задано EVENT_CHANNEL_ID у змінних середовища.', ephemeral: true });
+    }
+
+    const eventChannel = guild.channels.cache.get(eventChannelId);
+    if (!eventChannel || !eventChannel.isTextBased()) {
+      return interaction.reply({ content: 'Канал івентів не знайдено або він не текстовий.', ephemeral: true });
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const limit = interaction.options.getInteger('limit') || 500;
+    const counters = await countAllMentionsInChannel(eventChannel, limit);
+    if (counters.size === 0) {
+      return interaction.editReply('У каналі івентів не знайдено згадок користувачів.');
+    }
+
+    const sorted = [...counters.entries()].sort((a, b) => b[1] - a[1]);
+    const rows = sorted.map(([userId, count]) => `<@${userId}> — ${count}`).join('\n');
+
+    const chunks = [];
+    let current = '';
+    for (const line of rows.split('\n')) {
+      if ((current + line + '\n').length > 1800) {
+        chunks.push(current);
+        current = '';
+      }
+      current += `${line}\n`;
+    }
+    if (current) chunks.push(current);
+
+    await interaction.editReply(`Івенти (згадки) у каналі <#${eventChannelId}> за останні ${limit}+ повідомлень:
+${chunks[0]}`);
+    for (let i = 1; i < chunks.length; i++) {
+      await interaction.followUp({ content: chunks[i], ephemeral: true });
+    }
+    return;
+  }
+
   if (interaction.commandName === 'activity_channel') {
     const ch = interaction.options.getChannel('channel') || interaction.channel;
     const stats = getChannelActivity(gid, ch.id);
@@ -856,8 +904,13 @@ ${chunks[0]}`);
 
   if (interaction.commandName === 'sync_commands') {
     const result = await syncSlashCommands(true);
+    const names = commandDefinitions.map((c) => c.toJSON().name);
+    const required = ['quest_count', 'event_count', 'quest_stats', 'event_stats'];
+    const missing = required.filter((name) => !names.includes(name));
     return interaction.reply({
-      content: `✅ Синхронізовано ${result.count} команд у guild scope (${result.guildId}).`,
+      content: missing.length
+        ? `⚠️ Синхронізовано ${result.count} команд, але відсутні у дефініціях: ${missing.join(', ')}`
+        : `✅ Синхронізовано ${result.count} команд у guild scope (${result.guildId}). Команди квестів/івентів присутні.`,
       ephemeral: true
     });
   }

@@ -245,8 +245,17 @@ const commandDefinitions = [
     .setDescription('Порахувати, скільки разів користувача згадали у каналі івентів')
     .addUserOption((option) => option.setName('target').setDescription('Користувач').setRequired(false)),
   new SlashCommandBuilder()
+    .setName('event_stats')
+    .setDescription('Порахувати івенти (згадки) для всіх людей у каналі івентів')
+    .addIntegerOption((option) =>
+      option.setName('limit').setDescription('Скільки останніх повідомлень сканувати (мін. 500)').setRequired(false).setMinValue(500).setMaxValue(50000)
+    ),
+  new SlashCommandBuilder()
     .setName('quest_stats')
-    .setDescription('Порахувати квести (згадки) для всіх людей у квест-каналі'),
+    .setDescription('Порахувати квести (згадки) для всіх людей у квест-каналі')
+    .addIntegerOption((option) =>
+      option.setName('limit').setDescription('Скільки останніх повідомлень сканувати (мін. 500)').setRequired(false).setMinValue(500).setMaxValue(50000)
+    ),
     new SlashCommandBuilder()
     .setName('sync_commands')
     .setDescription('Примусово синхронізувати slash-команди')
